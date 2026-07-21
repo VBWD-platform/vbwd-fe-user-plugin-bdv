@@ -1,0 +1,54 @@
+{
+  "bdv": {
+    "nav": { "play": "BizDevVibes" },
+    "lobby": {
+      "title": "BizDevVibes",
+      "subtitle": "The sum is free. Buying a single die costs — and the fee goes to your opponents.",
+      "newMatch": "New match",
+      "resume": "Resume",
+      "review": "Review",
+      "board": "Board",
+      "seats": "Seats",
+      "opponents": "Opponents",
+      "start": "Start match",
+      "noMatches": "No matches yet. Start one below.",
+      "activeMatches": "Your matches",
+      "finished": "Finished",
+      "inProgress": "In progress",
+      "winner": "Winner: seat {seat}"
+    },
+    "match": {
+      "yourMove": "Your move",
+      "waiting": "Waiting for {name}",
+      "roll": "Roll the dice",
+      "rolled": "Rolled {a} and {b}",
+      "free": "free — fate",
+      "over_cap": "over your cap",
+      "cash": "Cash",
+      "position": "Position",
+      "turn": "Turn",
+      "chat": "Game chat",
+      "board": "Board",
+      "endTurn": "End turn",
+      "buy": "Buy for {price}",
+      "decline": "Decline",
+      "finished": "Match finished",
+      "negotiation": "Negotiation open — {seconds}s",
+      "bribeOffer": "Offer {amount} to take the free sum",
+      "accept": "Accept",
+      "declineOffer": "Decline"
+    },
+    "reason": {
+      "unowned": "unowned — {name}",
+      "completes_stage": "completes your {stage} stage",
+      "own_square": "yours — {name}",
+      "pays_rent": "rent {rent} to an opponent",
+      "tax": "{name} costs {amount}",
+      "go": "collect salary",
+      "goto_jail": "sent to Compliance Hold",
+      "draw_card": "draw a card",
+      "jail_visiting": "just visiting",
+      "neutral": "{name}"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "bdv",
+  "version": "26.7.0",
+  "displayName": "BizDevVibes",
+  "description": "Dice-market board game. The sum is free; buying a single die is priced from the game state and the fee goes to your opponents."
+}
