@@ -109,16 +109,28 @@ async function loadEvents() {
   }
 }
 
+/**
+ * True while a refresh is in flight. A match with LLM seats can take longer to
+ * answer than the poll interval, and without this the ticks stacked up: a dozen
+ * overlapping requests, each driving the same match, colliding on the action
+ * log and timing out at 30s. One in flight at a time.
+ */
+const refreshing = ref(false);
+
 async function refresh() {
+  if (refreshing.value) return;
+  refreshing.value = true;
   // One bad poll must not stop every future poll. Before this, a single
   // rejected request escaped as an unhandled promise and the match simply
   // stopped updating — with nothing on screen to say why.
   try {
     await store.refreshState();
+    await loadEvents();
   } catch (err) {
     console.warn('[bdv] refresh failed, will retry on the next poll', err);
+  } finally {
+    refreshing.value = false;
   }
-  await loadEvents();
 }
 
 function startPolling() {
