@@ -340,11 +340,24 @@ const entries = computed<ChatEntry[]>(() => {
           break;
       }
     }
+
+    // What the model was thinking, said in its own voice. Only LLM seats carry
+    // this — a baseline seat has no reasoning to give, and inventing one for it
+    // would be putting words in a lookup table's mouth.
+    if (action.reasoning) {
+      out.push({
+        key: `${action.seq}-why`,
+        seat: action.seat_index,
+        kind: 'think',
+        parts: [mention(action.seat_index), text(` ${action.reasoning}`)],
+      });
+    }
   }
   return out;
 });
 
 const kindIcon: Record<string, string> = {
+  think: '💭',
   roll: '🎲',
   purchase: '💸',
   fate: '➡️',
@@ -624,6 +637,14 @@ function nameOf(seatIndex: number | null) {
 .bdv-msg.is-bribe .bdv-bubble { border-left: 3px solid #f0a202; }
 .bdv-msg.is-rent .bdv-bubble { border-left: 3px solid #c0392b; }
 .bdv-msg.is-win .bdv-bubble { border-left: 3px solid #28a745; }
+/* A model thinking out loud. Set apart from what it DID, so a viewer never
+   mistakes an agent's rationalisation for a fact about the board. */
+.bdv-msg.is-think .bdv-bubble {
+  border-left: 3px solid #b8a6d9;
+  background: #faf8fd;
+  font-style: italic;
+  color: #5c5470;
+}
 
 .bdv-author {
   display: block;

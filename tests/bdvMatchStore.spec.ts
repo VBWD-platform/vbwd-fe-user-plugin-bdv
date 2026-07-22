@@ -276,3 +276,25 @@ describe('conceding', () => {
     expect(store.mustConcede).toBe(true);
   });
 });
+
+describe('watching a real agent fight', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it('a viewer with no seat still loads the match', async () => {
+    // An agents-only fight has no seat for its buyer — that is the format. The
+    // store must not treat "no seat" as "not allowed".
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options')
+        ? Promise.resolve(OPTIONS)
+        : Promise.resolve({ ...MATCH, your_seat: null }),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.yourSeat).toBeNull();
+    expect(store.isYourTurn).toBe(false);
+    expect(store.matchState?.phase).toBe('await_choice');
+  });
+});
