@@ -14,6 +14,11 @@ const fillPolicy = ref<'agents_now' | 'wait_forever' | 'wait_then_agents'>('agen
 const waitMinutes = ref(10);
 const WAIT_CHOICES = [3, 5, 10, 20, 60];
 const openMatches = ref<any[]>([]);
+const sessionSlug = ref('');
+const findSlug = ref('');
+const finding = ref(false);
+const foundMatch = ref<any>(null);
+const findError = ref<string | null>(null);
 const loading = ref(false);
 const creating = ref(false);
 const error = ref<string | null>(null);
@@ -57,12 +62,29 @@ async function createMatch() {
       seats: seats.value,
       fill_policy: fillPolicy.value,
       wait_minutes: fillPolicy.value === 'wait_then_agents' ? waitMinutes.value : null,
+      slug: sessionSlug.value.trim() || undefined,
     })) as any;
     router.push(`/dashboard/bdv/${data.id}`);
   } catch (err: any) {
     error.value = err?.message ?? 'Could not start the match';
   } finally {
     creating.value = false;
+  }
+}
+
+/** Find a table someone shared with you, by its slug. */
+async function findBySlug() {
+  const slug = findSlug.value.trim();
+  if (!slug || finding.value) return;
+  finding.value = true;
+  findError.value = null;
+  foundMatch.value = null;
+  try {
+    foundMatch.value = (await api.get(`/bdv/matches/by-slug/${encodeURIComponent(slug)}`)) as any;
+  } catch (err: any) {
+    findError.value = err?.status === 404 ? 'No game with that slug.' : err?.message ?? 'Lookup failed';
+  } finally {
+    finding.value = false;
   }
 }
 
@@ -100,8 +122,10 @@ onMounted(load);
               {{ board.name }}
             </option>
           </select>
+          <small>The rules and squares this table plays under.</small>
         </label>
-        <label class="field">
+
+        <label class="field field--narrow">
           <span>Seats</span>
           <input
             v-model.number="seats"
@@ -111,7 +135,19 @@ onMounted(load);
             :max="selectedBoardMeta?.max_seats ?? 4"
             data-testid="bdv-seat-count"
           />
-          <small>Agents fill the remaining seats. 3 is the smallest real table.</small>
+          <small>3 is the smallest real table.</small>
+        </label>
+
+        <label class="field">
+          <span>Session slug</span>
+          <input
+            v-model="sessionSlug"
+            class="input"
+            type="text"
+            placeholder="auto — e.g. amber-hawk-42"
+            data-testid="bdv-session-slug"
+          />
+          <small>How friends find this table. Leave blank for a generated one.</small>
         </label>
       </div>
 
@@ -166,6 +202,55 @@ onMounted(load);
       </button>
     </div>
 
+    <div class="bdv-card" data-testid="bdv-find">
+      <header class="head">
+        <h2>Find a game</h2>
+        <p class="sub">Someone shared a slug with you? Type it here.</p>
+      </header>
+      <div class="find-row">
+        <input
+          v-model="findSlug"
+          class="input"
+          type="text"
+          placeholder="amber-hawk-42"
+          data-testid="bdv-find-slug"
+          @keyup.enter="findBySlug"
+        />
+        <button class="btn" data-testid="bdv-find-btn" :disabled="finding || !findSlug.trim()" @click="findBySlug">
+          {{ finding ? 'Looking…' : 'Find' }}
+        </button>
+      </div>
+
+      <p v-if="findError" class="alert" data-testid="bdv-find-error">{{ findError }}</p>
+
+      <div v-if="foundMatch" class="found" data-testid="bdv-find-result">
+        <div>
+          <strong>{{ foundMatch.slug }}</strong>
+          <span class="badge" :class="foundMatch.status === 'lobby' ? 'badge--live' : 'badge--done'">
+            {{ foundMatch.status }}
+          </span>
+          <p class="sub">
+            {{ foundMatch.seats?.length }} seats · {{ foundMatch.open_seats }} open
+          </p>
+        </div>
+        <button
+          v-if="foundMatch.can_join"
+          class="btn btn--primary"
+          data-testid="bdv-find-join"
+          @click="joinMatch(foundMatch.id)"
+        >
+          Join this table
+        </button>
+        <router-link
+          v-else-if="foundMatch.your_seat !== null"
+          class="btn"
+          :to="`/dashboard/bdv/${foundMatch.id}`"
+          >Open</router-link
+        >
+        <span v-else class="muted">No open seats.</span>
+      </div>
+    </div>
+
     <div v-if="openMatches.length" class="bdv-card" data-testid="bdv-open-tables">
       <header class="head">
         <h2>Tables waiting for players</h2>
@@ -196,10 +281,11 @@ onMounted(load);
       </p>
       <table v-else class="table">
         <thead>
-          <tr><th>Status</th><th>Seats</th><th>Moves</th><th>Result</th><th></th></tr>
+          <tr><th>Slug</th><th>Status</th><th>Seats</th><th>Moves</th><th>Result</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="match in matches" :key="match.id" data-testid="bdv-match-row">
+            <td class="slug">{{ match.slug }}</td>
             <td>
               <span class="badge" :class="match.status === 'finished' ? 'badge--done' : 'badge--live'">
                 {{ match.status }}
@@ -226,17 +312,16 @@ onMounted(load);
 <style scoped>
 /* Mirrors the core admin settings pages: white 8px cards, #3498db primary,
    #e9ecef rules, #2c3e50 headings. */
-.bdv-lobby { padding: 20px; display: flex; flex-direction: column; gap: 20px; max-width: 900px; }
+.bdv-lobby { padding: 24px; display: flex; flex-direction: column; gap: 24px; max-width: 960px; }
 
 .bdv-card { background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef; }
-.head { margin-bottom: 16px; }
+.head { margin-bottom: 18px; }
 .head h2 { margin: 0; color: #2c3e50; }
 .sub { color: #666; font-size: 0.9rem; margin: 6px 0 0; }
 
 .alert { padding: 10px 14px; background: #fff5f5; color: #c0392b; border-radius: 4px; font-size: 14px; }
 
-.new-match { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
-.field { display: block; }
+.field { display: block; margin: 0; }
 .field > span { display: block; font-size: 13px; font-weight: 600; color: #2c3e50; margin-bottom: 4px; }
 .field small { display: block; color: #6c757d; font-size: 12px; margin-top: 3px; }
 
@@ -264,6 +349,7 @@ onMounted(load);
 .table td { padding: 10px 12px; border-bottom: 1px solid #e9ecef; color: #2c3e50; font-size: 14px; }
 .table tbody tr:hover { background: #f8f9fa; }
 .right { text-align: right; }
+.slug { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #6c757d; }
 .muted { color: #6c757d; }
 
 .badge { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 12px; font-weight: 600; color: #fff; }
@@ -272,7 +358,20 @@ onMounted(load);
 
 .empty { padding: 30px; text-align: center; color: #6c757d; }
 
-.policy { border: 1px solid #e9ecef; border-radius: 6px; padding: 12px 14px; margin: 4px 0 16px; }
+/* A real grid so every label sits on the same baseline regardless of hint
+   length — the previous flex + align-items:flex-end staggered them. */
+.new-match {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px 20px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+.field--narrow { max-width: 150px; }
+.field .input { width: 100%; }
+.field small { min-height: 15px; }
+
+.policy { border: 1px solid #e9ecef; border-radius: 6px; padding: 14px 16px; margin: 0 0 20px; }
 .policy legend { font-size: 13px; font-weight: 600; color: #2c3e50; padding: 0 6px; }
 .opt {
   display: flex; gap: 10px; align-items: flex-start;
@@ -288,4 +387,14 @@ onMounted(load);
   background: #fff; font-size: 12px; cursor: pointer; color: #2c3e50;
 }
 .chip.on { background: #3498db; border-color: #3498db; color: #fff; font-weight: 600; }
+
+.find-row { display: flex; gap: 10px; align-items: center; }
+.find-row .input { max-width: 280px; }
+.found {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-top: 14px; padding: 12px 14px; background: #f8f9fa;
+  border: 1px solid #e9ecef; border-radius: 6px;
+}
+.found strong { color: #2c3e50; margin-right: 8px; font-family: ui-monospace, Menlo, monospace; }
+.found .sub { margin: 4px 0 0; }
 </style>

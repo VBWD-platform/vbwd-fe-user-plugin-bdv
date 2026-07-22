@@ -113,7 +113,12 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
     <section class="bdv-pane-board">
       <header class="bdv-topbar">
         <div>
-          <h2>{{ boardName }}</h2>
+          <h2>
+            {{ boardName }}
+            <span v-if="store.match?.slug" class="slug" data-testid="bdv-match-slug">
+              {{ store.match.slug }}
+            </span>
+          </h2>
           <p class="bdv-phase" data-testid="bdv-phase">
             <span v-if="store.isFinished">Match finished</span>
             <span v-else-if="store.isYourTurn">Your move — {{ store.phase.replace('_', ' ') }}</span>
@@ -150,7 +155,11 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
         <button class="start-now" data-testid="bdv-start-now" @click="startNow">
           Start now with agents
         </button>
-        <p class="hint">Share the lobby link, or start immediately and let agents fill the rest.</p>
+        <p class="hint">
+          Share the slug
+          <code v-if="store.match?.slug">{{ store.match.slug }}</code>
+          so friends can find this table — or start now and let agents fill the rest.
+        </p>
       </section>
 
       <BdvBoardCanvas
@@ -224,6 +233,16 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
   flex-wrap: wrap;
 }
 .bdv-topbar h2 { margin: 0; color: #2c3e50; font-size: 18px; }
+.slug {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f1f3f5;
+  color: #6c757d;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 500;
+}
 .bdv-phase { margin: 2px 0 0; color: #666; font-size: 13px; }
 
 .bdv-seatstrip {
@@ -282,6 +301,10 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
 }
 .start-now:hover { background: #2c85c4; }
 .hint { margin: 4px 0 0; font-size: 12px; color: #6c757d; }
+.hint code {
+  padding: 2px 7px; border-radius: 4px; background: #fff;
+  border: 1px solid #ced4da; color: #2c3e50; font-weight: 600;
+}
 
 @media (max-width: 1000px) {
   .bdv-match { grid-template-columns: 1fr; height: auto; }
