@@ -33,6 +33,34 @@ const fightError = ref<string | null>(null);
 const starting = ref(false);
 
 const canAfford = computed(() => balance.value >= price.value);
+
+/* -------------------------------------------- your own table's line-up
+ * Distinct from the fight roster above: here you TAKE a seat, so the picks
+ * are your opponents. The same agent may be fielded more than once — three
+ * copies of one personality is a real table, and the server numbers them so
+ * the chat stays readable.
+ */
+const lineup = ref<string[]>([]);
+const maxOpponents = computed(() => (selectedBoardMeta.value?.max_seats ?? 4) - 1);
+const lineupFull = computed(() => lineup.value.length >= maxOpponents.value);
+
+function addOpponent(agentId: string) {
+  if (lineupFull.value) return;
+  lineup.value = [...lineup.value, agentId];
+}
+function removeOpponent(position: number) {
+  lineup.value = lineup.value.filter((_, index) => index !== position);
+}
+function agentById(id: string) {
+  return agents.value.find((a) => a.id === id);
+}
+/** Repeats are numbered exactly as the server will name them. */
+function lineupLabel(position: number) {
+  const id = lineup.value[position];
+  const seen = lineup.value.slice(0, position + 1).filter((a) => a === id).length;
+  const name = agentById(id)?.name ?? 'Agent';
+  return seen === 1 ? name : `${name} #${seen}`;
+}
 const enoughAgents = computed(
   () => chosenAgents.value.length >= 2 && chosenAgents.value.length <= maxAgents.value,
 );
@@ -114,7 +142,10 @@ async function createMatch() {
   try {
     const data = (await api.post('/bdv/matches', {
       board_slug: selectedBoard.value,
-      seats: seats.value,
+      // A chosen line-up decides the table size; the seat number is only the
+      // fallback for "just give me opponents".
+      seats: lineup.value.length ? lineup.value.length + 1 : seats.value,
+      opponents: lineup.value.map((id) => ({ agent_profile_id: id })),
       fill_policy: fillPolicy.value,
       wait_minutes: fillPolicy.value === 'wait_then_agents' ? waitMinutes.value : null,
       slug: sessionSlug.value.trim() || undefined,
@@ -244,6 +275,43 @@ onMounted(async () => {
           />
           <small>3 is the smallest real table.</small>
         </label>
+
+        <div v-if="agents.length" class="field field--wide" data-testid="bdv-lineup">
+          <span>Your opponents</span>
+          <div class="pickers">
+            <button
+              v-for="agent in agents"
+              :key="agent.id"
+              class="pick"
+              :disabled="lineupFull"
+              :data-testid="`bdv-pick-${agent.slug}`"
+              @click="addOpponent(agent.id)"
+            >
+              <span class="nm">{{ agent.name }}</span>
+              <span class="rec">{{ agent.games_won }}/{{ agent.games_played }} won</span>
+              <span class="plus">+</span>
+            </button>
+          </div>
+
+          <ul v-if="lineup.length" class="chosen" data-testid="bdv-lineup-chosen">
+            <li v-for="(id, position) in lineup" :key="`${id}-${position}`">
+              <span>{{ lineupLabel(position) }}</span>
+              <button
+                class="drop"
+                :data-testid="`bdv-drop-${position}`"
+                @click="removeOpponent(position)"
+              >
+                ×
+              </button>
+            </li>
+          </ul>
+          <small v-if="lineup.length">
+            You plus {{ lineup.length }} — pick the same agent again to field it twice.
+          </small>
+          <small v-else>
+            Pick who you are up against, or leave empty for anonymous agents.
+          </small>
+        </div>
 
         <label class="field">
           <span>Session slug</span>
@@ -546,4 +614,38 @@ onMounted(async () => {
 .agent .persona { display: block; font-size: 12px; color: #6c757d; margin-top: 2px; }
 .agent .record { display: block; font-size: 11px; color: #8a949e; margin-top: 4px; }
 .alert--warn { background: #fff8e6; color: #7a5b00; }
+
+/* --------------------------------------------------------- opponent picker */
+.field--wide { grid-column: 1 / -1; }
+.pickers { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 16px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #2c3e50;
+}
+.pick:hover:not(:disabled) { border-color: #3498db; background: #f4fafe; }
+.pick:disabled { opacity: 0.5; cursor: not-allowed; }
+.pick .nm { font-weight: 600; }
+.pick .rec { font-size: 11px; color: #8a949e; }
+.pick .plus { color: #3498db; font-weight: 700; }
+.chosen { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chosen li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 14px;
+  background: #eef7fd;
+  border: 1px solid #d6e9f8;
+  font-size: 12px;
+  color: #2c3e50;
+}
+.chosen .drop { border: 0; background: none; cursor: pointer; color: #c0392b; font-size: 14px; line-height: 1; }
 </style>
