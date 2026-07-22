@@ -6,14 +6,21 @@
  * options are shown with their price and the reason; hiding them would hide
  * the game.
  */
+import { computed } from 'vue';
 import type { OptionQuote } from '../stores/bdvMatch';
 
-defineProps<{
+const props = defineProps<{
   options: OptionQuote[];
   phase: string;
   isYourTurn: boolean;
   currencyLabel: string;
   submitting: boolean;
+  /** Final standings, once the match is over. */
+  seats?: Array<{ index: number; cash: number; bankrupt: boolean }>;
+  seatMeta?: Array<{ display_name?: string }>;
+  winnerSeat?: number | null;
+  /** Null for a spectator — they hold no seat, which is the fight format. */
+  yourSeat?: number | null;
   /** Server-computed. Null means this square simply cannot be bought. */
   purchaseOffer?: {
     square_index: number;
@@ -29,7 +36,19 @@ const emit = defineEmits<{
   (e: 'choose', steps: number): void;
   (e: 'end-turn'): void;
   (e: 'buy'): void;
+  (e: 'exit'): void;
 }>();
+
+/** Survivors first, then the busted in the order they went out. */
+const standings = computed(() =>
+  [...(props.seats ?? [])].sort(
+    (a, b) => Number(a.bankrupt) - Number(b.bankrupt) || b.cash - a.cash,
+  ),
+);
+
+function nameOf(index: number) {
+  return props.seatMeta?.[index]?.display_name ?? `Seat ${index + 1}`;
+}
 
 const REASON_TEXT: Record<string, string> = {
   unowned: 'unowned — you could buy it',
@@ -47,7 +66,31 @@ const REASON_TEXT: Record<string, string> = {
 
 <template>
   <div class="bdv-panel" data-testid="bdv-options">
-    <template v-if="isYourTurn && phase === 'await_roll'">
+    <!-- The result outranks everything. A finished match that still says
+         "waiting for the other seats" reads as a hung game rather than a won
+         one — which is exactly how it looked when every opponent had gone
+         bankrupt and the winner was already decided. -->
+    <template v-if="phase === 'finished'">
+      <p class="bdv-lead bdv-lead--win" data-testid="bdv-result">
+        <template v-if="winnerSeat === null || winnerSeat === undefined">
+          Everyone is out — no winner.
+        </template>
+        <template v-else-if="winnerSeat === yourSeat">🏆 You win.</template>
+        <template v-else>🏆 {{ nameOf(winnerSeat) }} wins.</template>
+      </p>
+      <ol class="bdv-standings" data-testid="bdv-standings">
+        <li v-for="seat in standings" :key="seat.index" :class="{ out: seat.bankrupt }">
+          <span class="nm">{{ nameOf(seat.index) }}</span>
+          <span v-if="seat.bankrupt" class="tag">bankrupt</span>
+          <span v-else class="cash">{{ seat.cash }} {{ currencyLabel }}</span>
+        </li>
+      </ol>
+      <button class="bdv-cta" data-testid="bdv-close-finished" @click="emit('exit')">
+        Close
+      </button>
+    </template>
+
+    <template v-else-if="isYourTurn && phase === 'await_roll'">
       <p class="bdv-lead">Two dice. Three ways to move.</p>
       <button class="bdv-cta" data-testid="bdv-roll" :disabled="submitting" @click="emit('roll')">
         🎲 Roll the dice
@@ -117,11 +160,40 @@ const REASON_TEXT: Record<string, string> = {
       </button>
     </template>
 
+    <p v-else-if="yourSeat === null" class="bdv-waiting" data-testid="bdv-watching">
+      Watching — the agents are playing it out.
+    </p>
     <p v-else class="bdv-waiting">Waiting for the other seats…</p>
   </div>
 </template>
 
 <style scoped>
+.bdv-lead--win { font-size: 18px; color: #1e7e34; font-weight: 700; }
+.bdv-standings {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  width: 100%;
+  max-width: 320px;
+}
+.bdv-standings li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: #fff;
+  font-size: 13px;
+  color: #2c3e50;
+}
+.bdv-standings li.out { opacity: 0.6; }
+.bdv-standings .nm { font-weight: 600; }
+.bdv-standings .cash { font-variant-numeric: tabular-nums; color: #1e7e34; font-weight: 600; }
+.bdv-standings .tag { font-size: 11px; color: #c0392b; }
+
 .bdv-panel {
   width: 100%;
   max-width: 340px;

@@ -6,7 +6,7 @@
  * affordance and must not be forced onto a phone.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/api';
 import { useBdvMatchStore } from '../stores/bdvMatch';
 import BdvBoardCanvas from '../components/BdvBoardCanvas.vue';
@@ -17,6 +17,7 @@ import BdvEstatePanel from '../components/BdvEstatePanel.vue';
 import BdvTradeScreen from '../components/BdvTradeScreen.vue';
 
 const route = useRoute();
+const router = useRouter();
 const store = useBdvMatchStore();
 const pollTimer = ref<number | null>(null);
 const actions = ref<any[]>([]);
@@ -47,6 +48,15 @@ const countdown = computed(() => {
 });
 
 const showEstate = ref(false);
+
+/**
+ * Leave the table. The match is server-side and keeps going without this
+ * browser — walking away is not resigning, and a seat that wants OUT concedes
+ * through the rent modal, where the rules can be enforced.
+ */
+function leaveMatch() {
+  router.push('/dashboard/bdv');
+}
 /** Squares locked as collateral cannot be traded — the same rule the server applies. */
 const pledged = computed(() =>
   (store.matchState?.loans ?? []).flatMap((loan: any) => loan.collateral),
@@ -100,7 +110,14 @@ async function loadEvents() {
 }
 
 async function refresh() {
-  await store.refreshState();
+  // One bad poll must not stop every future poll. Before this, a single
+  // rejected request escaped as an unhandled promise and the match simply
+  // stopped updating — with nothing on screen to say why.
+  try {
+    await store.refreshState();
+  } catch (err) {
+    console.warn('[bdv] refresh failed, will retry on the next poll', err);
+  }
   await loadEvents();
 }
 
@@ -167,15 +184,20 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
             <span v-else>Waiting for {{ seatMeta[store.matchState?.turn_seat ?? 0]?.display_name }}</span>
           </p>
         </div>
-        <button
-          v-if="!isWaiting && !store.isFinished"
-          class="bdv-manage"
-          data-testid="bdv-manage"
-          @click="showEstate = true"
-        >
-          Manage book
-          <span v-if="store.myDebt" class="debt">{{ store.myDebt }} owed</span>
-        </button>
+        <div class="bdv-topbar-actions">
+          <button
+            v-if="!isWaiting && !store.isFinished"
+            class="bdv-manage"
+            data-testid="bdv-manage"
+            @click="showEstate = true"
+          >
+            Manage book
+            <span v-if="store.myDebt" class="debt">{{ store.myDebt }} owed</span>
+          </button>
+          <button class="bdv-exit" data-testid="bdv-exit-game" @click="leaveMatch">
+            {{ store.isFinished ? 'Back to games' : 'Exit game' }}
+          </button>
+        </div>
         <ul class="bdv-seatstrip" data-testid="bdv-seats">
           <li
             v-for="seat in seats"
@@ -294,11 +316,16 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
             :currency-label="currencyLabel"
             :submitting="store.submitting"
             :purchase-offer="store.purchaseOffer"
+            :seats="seats"
+            :seat-meta="seatMeta"
+            :winner-seat="store.matchState?.winner_seat ?? null"
+            :your-seat="store.yourSeat"
             @roll="act(() => store.roll())"
             @close-negotiation="act(() => store.closeNegotiation())"
             @choose="choose"
             @end-turn="act(() => store.endTurn())"
             @buy="act(() => store.buyProperty())"
+            @exit="leaveMatch"
           />
         </template>
       </BdvBoardCanvas>
@@ -320,6 +347,18 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
 </template>
 
 <style scoped>
+.bdv-topbar-actions { display: flex; gap: 8px; align-items: center; }
+.bdv-exit {
+  padding: 7px 14px;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  background: #fff;
+  color: #6c757d;
+  font-size: 13px;
+  cursor: pointer;
+}
+.bdv-exit:hover { background: #f8f9fa; color: #2c3e50; }
+
 .bdv-match {
   display: grid;
   grid-template-columns: 70% 30%;

@@ -217,6 +217,12 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
 
     async refreshOptions() {
       if (!this.matchId) return;
+      // A watcher holds no seat and therefore has no options. Asking anyway is
+      // a pointless round-trip on every poll of an agent fight.
+      if (this.yourSeat === null) {
+        this.options = [];
+        return;
+      }
       const data = (await api.get(`/bdv/matches/${this.matchId}/options`)) as any;
       this.options = data.items;
       this.stateSeq = data.state_seq;

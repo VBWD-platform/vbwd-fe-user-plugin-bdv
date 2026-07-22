@@ -298,3 +298,83 @@ describe('watching a real agent fight', () => {
     expect(store.matchState?.phase).toBe('await_choice');
   });
 });
+
+describe('a watcher polling an agent fight', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it('never asks for options it cannot have', async () => {
+    // The 403 that killed the poll loop came from asking at all. A seatless
+    // watcher has nothing to choose, so the request is skipped outright.
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options')
+        ? Promise.reject(new Error('should never be called'))
+        : Promise.resolve({ ...MATCH, your_seat: null }),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+
+    expect(store.yourSeat).toBeNull();
+    expect(store.options).toEqual([]);
+    const optionCalls = (api.get as any).mock.calls.filter((c: any[]) =>
+      String(c[0]).endsWith('/options'),
+    );
+    expect(optionCalls).toHaveLength(0);
+  });
+
+  it('still refreshes state on every poll', async () => {
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options')
+        ? Promise.reject(new Error('should never be called'))
+        : Promise.resolve({ ...MATCH, your_seat: null, state_seq: 9 }),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    await store.refreshState();
+    expect(store.stateSeq).toBe(9);
+  });
+});
+
+describe('a finished fight', () => {
+  const FINISHED = {
+    ...MATCH,
+    your_seat: null,
+    state: {
+      ...MATCH.state,
+      phase: 'finished',
+      winner_seat: 0,
+      seats: [
+        { index: 0, cash: 730, position: 3, in_jail: false, bankrupt: false },
+        { index: 1, cash: 0, position: 8, in_jail: false, bankrupt: true },
+        { index: 2, cash: 0, position: 12, in_jail: false, bankrupt: true },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options') ? Promise.resolve(OPTIONS) : Promise.resolve(FINISHED),
+    );
+  });
+
+  it('is over as soon as one seat is left standing', async () => {
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.isFinished).toBe(true);
+    expect(store.matchState?.winner_seat).toBe(0);
+    const survivors = (store.matchState?.seats ?? []).filter((s: any) => !s.bankrupt);
+    expect(survivors).toHaveLength(1);
+  });
+
+  it('is never anyone\'s turn once it is finished', async () => {
+    // isYourTurn gating the centre panel is what left a decided match showing
+    // "waiting for the other seats".
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.isYourTurn).toBe(false);
+  });
+});
