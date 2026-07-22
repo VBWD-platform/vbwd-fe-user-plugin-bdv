@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * The priced option set, as clickable cards.
+ * The priced option set, as clickable cards — the centre panel of the board.
  *
  * Prices come from the server quote and are never computed here. Unaffordable
- * options are shown with their price and a reason — hiding them would hide the
- * game.
+ * options are shown with their price and the reason; hiding them would hide
+ * the game.
  */
 import type { OptionQuote } from '../stores/bdvMatch';
 
@@ -23,127 +23,155 @@ const emit = defineEmits<{
   (e: 'end-turn'): void;
   (e: 'buy'): void;
 }>();
+
+const REASON_TEXT: Record<string, string> = {
+  unowned: 'unowned — you could buy it',
+  completes_stage: 'completes your funnel stage',
+  own_square: 'yours — nothing happens',
+  pays_rent: 'opponent owns it — you pay rent',
+  tax: 'a cost square',
+  go: 'collect your quarterly budget',
+  goto_jail: 'straight to compliance hold',
+  draw_card: 'draw a card',
+  jail_visiting: 'just visiting',
+  neutral: 'neutral ground',
+};
 </script>
 
 <template>
-  <div class="bdv-options" data-testid="bdv-options">
-    <button
-      v-if="isYourTurn && phase === 'await_roll'"
-      class="bdv-btn bdv-btn-primary"
-      data-testid="bdv-roll"
-      :disabled="submitting"
-      @click="emit('roll')"
-    >
-      {{ $t('bdv.match.roll') }}
-    </button>
-
-    <button
-      v-else-if="isYourTurn && phase === 'negotiate'"
-      class="bdv-btn"
-      data-testid="bdv-close-negotiation"
-      :disabled="submitting"
-      @click="emit('close-negotiation')"
-    >
-      {{ $t('bdv.match.yourMove') }}
-    </button>
-
-    <template v-else-if="isYourTurn && phase === 'await_choice'">
-      <button
-        v-for="option in options"
-        :key="option.steps"
-        class="bdv-card"
-        :class="{ 'is-locked': !option.affordable, 'is-free': option.is_sum }"
-        :data-testid="`bdv-option-${option.steps}`"
-        :disabled="!option.affordable || submitting"
-        @click="emit('choose', option.steps)"
-      >
-        <span class="bdv-card-move">+{{ option.steps }}</span>
-        <span class="bdv-card-target">{{ option.target_name }}</span>
-        <span class="bdv-card-reason">
-          {{ $t(`bdv.reason.${option.reason}`, option.reason_params as any) }}
-        </span>
-        <span class="bdv-card-price" data-testid="bdv-option-price">
-          <template v-if="option.is_sum">{{ $t('bdv.match.free') }}</template>
-          <template v-else>
-            {{ option.price }} {{ currencyLabel }}
-            <em v-if="!option.affordable">— {{ $t('bdv.match.over_cap') }}</em>
-          </template>
-        </span>
+  <div class="bdv-panel" data-testid="bdv-options">
+    <template v-if="isYourTurn && phase === 'await_roll'">
+      <p class="bdv-lead">Two dice. Three ways to move.</p>
+      <button class="bdv-cta" data-testid="bdv-roll" :disabled="submitting" @click="emit('roll')">
+        🎲 Roll the dice
       </button>
     </template>
 
-    <div v-else-if="isYourTurn" class="bdv-turn-actions">
-      <button class="bdv-btn" data-testid="bdv-buy" :disabled="submitting" @click="emit('buy')">
-        {{ $t('bdv.match.buy', { price: '' }) }}
+    <template v-else-if="isYourTurn && phase === 'negotiate'">
+      <p class="bdv-lead">Negotiation window open</p>
+      <p class="bdv-hint">Opponents may pay you to take the free sum. Close it to choose.</p>
+      <button class="bdv-cta" data-testid="bdv-close-negotiation" :disabled="submitting" @click="emit('close-negotiation')">
+        See my options →
       </button>
-      <button class="bdv-btn" data-testid="bdv-end-turn" :disabled="submitting" @click="emit('end-turn')">
-        {{ $t('bdv.match.endTurn') }}
-      </button>
-    </div>
+    </template>
+
+    <template v-else-if="isYourTurn && phase === 'await_choice'">
+      <p class="bdv-lead">Your move — the sum is free</p>
+      <ul class="bdv-cards">
+        <li v-for="option in options" :key="option.steps">
+          <button
+            class="bdv-card"
+            :class="{ locked: !option.affordable, free: option.is_sum }"
+            :data-testid="`bdv-option-${option.steps}`"
+            :disabled="!option.affordable || submitting"
+            @click="emit('choose', option.steps)"
+          >
+            <span class="mv">+{{ option.steps }}</span>
+            <span class="tg">
+              <strong>{{ option.target_name }}</strong>
+              <em>{{ REASON_TEXT[option.reason] || option.reason }}</em>
+            </span>
+            <span class="pr" data-testid="bdv-option-price">
+              <template v-if="option.is_sum">free<small>fate</small></template>
+              <template v-else>
+                {{ option.price }}<small>{{ currencyLabel }}</small>
+              </template>
+            </span>
+          </button>
+          <p v-if="!option.affordable" class="bdv-locked-note">over your 30 % cap</p>
+        </li>
+      </ul>
+    </template>
+
+    <template v-else-if="isYourTurn">
+      <p class="bdv-lead">Resolve your turn</p>
+      <div class="bdv-row">
+        <button class="bdv-cta bdv-cta--ghost" data-testid="bdv-buy" :disabled="submitting" @click="emit('buy')">
+          Buy this square
+        </button>
+        <button class="bdv-cta" data-testid="bdv-end-turn" :disabled="submitting" @click="emit('end-turn')">
+          End turn
+        </button>
+      </div>
+    </template>
+
+    <p v-else class="bdv-waiting">Waiting for the other seats…</p>
   </div>
 </template>
 
 <style scoped>
-.bdv-options {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.bdv-panel {
   width: 100%;
-  max-width: 320px;
+  max-width: 340px;
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 2px 10px rgba(44, 62, 80, 0.06);
+  text-align: center;
 }
-.bdv-card {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-areas: 'move target' 'move reason' 'move price';
-  gap: 0 8px;
-  padding: 8px 10px;
-  text-align: left;
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #d8dee6);
+
+.bdv-lead { margin: 0 0 4px; font-weight: 700; color: #2c3e50; font-size: 14px; }
+.bdv-hint { margin: 0 0 10px; font-size: 12px; color: #6c757d; }
+.bdv-waiting { margin: 0; color: #6c757d; font-size: 13px; }
+
+.bdv-cta {
+  width: 100%;
+  padding: 10px 16px;
+  margin-top: 8px;
+  background: #3498db;
+  color: #fff;
+  border: 1px solid #3498db;
   border-radius: 6px;
-  cursor: pointer;
-}
-.bdv-card.is-free {
-  border-color: var(--color-success, #3a9d5d);
-}
-.bdv-card.is-locked {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.bdv-card-move {
-  grid-area: move;
-  align-self: center;
-  font-size: 1.2rem;
-  font-weight: 700;
-}
-.bdv-card-target {
-  grid-area: target;
+  font-size: 14px;
   font-weight: 600;
-}
-.bdv-card-reason {
-  grid-area: reason;
-  font-size: 0.75rem;
-  color: var(--color-text-muted, #7b8794);
-}
-.bdv-card-price {
-  grid-area: price;
-  font-weight: 700;
-  color: var(--color-primary, #3b6fd4);
-}
-.bdv-btn {
-  padding: 8px 12px;
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #d8dee6);
-  border-radius: 6px;
   cursor: pointer;
+  transition: background 0.15s;
 }
-.bdv-btn-primary {
-  background: var(--color-primary, #3b6fd4);
-  color: var(--color-surface, #fff);
-  border-color: var(--color-primary, #3b6fd4);
+.bdv-cta:hover:not(:disabled) { background: #2c85c4; }
+.bdv-cta:disabled { opacity: 0.55; cursor: not-allowed; }
+.bdv-cta--ghost { background: #fff; color: #2c3e50; border-color: #ced4da; }
+.bdv-cta--ghost:hover:not(:disabled) { background: #f8f9fa; }
+
+.bdv-row { display: flex; gap: 8px; }
+
+.bdv-cards { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+.bdv-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #ced4da;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.bdv-turn-actions {
-  display: flex;
-  gap: 6px;
+.bdv-card:hover:not(:disabled) { border-color: #3498db; background: #f4faff; }
+.bdv-card.free { border-color: #28a745; }
+.bdv-card.free:hover:not(:disabled) { background: #f3fbf5; }
+.bdv-card.locked { opacity: 0.55; cursor: not-allowed; }
+
+.mv {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: #2c3e50; color: #fff;
+  font-weight: 800; font-size: 13px;
 }
+.bdv-card.free .mv { background: #28a745; }
+
+.tg { display: flex; flex-direction: column; min-width: 0; }
+.tg strong { font-size: 13px; color: #2c3e50; }
+.tg em { font-style: normal; font-size: 11px; color: #6c757d; }
+
+.pr { font-size: 15px; font-weight: 800; color: #3498db; white-space: nowrap; }
+.bdv-card.free .pr { color: #28a745; }
+.pr small { display: block; font-size: 9px; font-weight: 600; color: #98a2b0; text-transform: uppercase; }
+
+.bdv-locked-note { margin: 2px 0 0 40px; font-size: 10px; color: #c0392b; text-align: left; }
 </style>

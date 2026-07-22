@@ -1,0 +1,385 @@
+<script setup lang="ts">
+/**
+ * The game chat — rich content over the match's own event stream.
+ *
+ * IMPORTANT about what this is and is not: the bot bridge (S146-4) is not built
+ * yet, so this does NOT talk to meinchat. It renders the match's append-only
+ * action log as rich cards, plus deterministic table talk derived from the same
+ * events. Every number shown comes from the server; nothing here invents state.
+ * When the bridge lands, the same card shapes arrive as `bot_choices` messages
+ * from a real meinchat room and this component becomes the renderer for them.
+ *
+ * Mentions: seats address each other as @nickname, rendered as chips. The
+ * mention target is resolved from the seat list, so a rename follows through.
+ */
+import { computed } from 'vue';
+
+interface Seat {
+  seat_index: number;
+  display_name: string;
+  kind: string;
+}
+
+const props = defineProps<{
+  actions: any[];
+  seats: Seat[];
+  yourSeat: number | null;
+  currencyLabel: string;
+}>();
+
+/** @nickname for a seat — spaces stripped so the chip is one token. */
+function handleOf(seatIndex: number | null | undefined): string {
+  if (seatIndex === null || seatIndex === undefined) return '@table';
+  const seat = props.seats.find((s) => s.seat_index === seatIndex);
+  const name = seat?.display_name ?? `Seat ${seatIndex + 1}`;
+  return '@' + name.replace(/\s+/g, '');
+}
+
+function isYou(seatIndex: number | null | undefined) {
+  return seatIndex !== null && seatIndex !== undefined && seatIndex === props.yourSeat;
+}
+
+interface ChatEntry {
+  key: string;
+  seat: number | null;
+  kind: string;
+  /** Segments so @mentions can be rendered as chips rather than raw text. */
+  parts: Array<{ t: 'text' | 'mention'; v: string; you?: boolean }>;
+  dice?: number[];
+  options?: Array<{ steps: number; label: string; price: string; free: boolean }>;
+  amount?: string;
+  to?: string;
+}
+
+function text(v: string) {
+  return { t: 'text' as const, v };
+}
+function mention(seatIndex: number | null | undefined) {
+  return { t: 'mention' as const, v: handleOf(seatIndex), you: isYou(seatIndex) };
+}
+
+/**
+ * Fold the action log into chat entries. Deterministic: the same log always
+ * produces the same conversation, which keeps replays honest.
+ */
+const entries = computed<ChatEntry[]>(() => {
+  const out: ChatEntry[] = [];
+  for (const action of props.actions ?? []) {
+    for (const [i, ev] of (action.events ?? []).entries()) {
+      const key = `${action.seq}-${i}`;
+      const seat = ev.seat ?? action.seat_index ?? null;
+
+      switch (ev.type) {
+        case 'rolled':
+          out.push({
+            key,
+            seat,
+            kind: 'roll',
+            dice: ev.dice,
+            parts: [mention(seat), text(` rolled ${ev.dice?.join(' + ')} — three ways to move.`)],
+          });
+          break;
+
+        case 'option_purchased':
+          out.push({
+            key,
+            seat,
+            kind: 'purchase',
+            amount: `${ev.price} ${props.currencyLabel}`,
+            parts: [
+              mention(seat),
+              text(` bought the +${ev.steps} move for ${ev.price} ${props.currencyLabel} — paid to `),
+              ...Object.keys(ev.payouts || {}).flatMap((k, idx) => [
+                ...(idx ? [text(', ')] : []),
+                mention(Number(k)),
+              ]),
+              text('.'),
+            ],
+          });
+          // The recipient answers — the redistribution made visible.
+          for (const [recipient, amount] of Object.entries(ev.payouts || {})) {
+            out.push({
+              key: `${key}-thanks-${recipient}`,
+              seat: Number(recipient),
+              kind: 'talk',
+              parts: [
+                mention(seat),
+                text(` keep dodging, that ${amount} ${props.currencyLabel} funds my next buy.`),
+              ],
+            });
+          }
+          break;
+
+        case 'option_taken_free':
+          out.push({
+            key,
+            seat,
+            kind: 'fate',
+            parts: [
+              mention(seat),
+              text(ev.is_sum ? ' took the sum — fate, free.' : ` moved +${ev.steps} for free.`),
+            ],
+          });
+          break;
+
+        case 'paid_rent':
+          out.push({
+            key,
+            seat,
+            kind: 'rent',
+            amount: `${ev.amount} ${props.currencyLabel}`,
+            parts: [
+              mention(seat),
+              text(` paid ${ev.amount} ${props.currencyLabel} rent to `),
+              mention(ev.to),
+              text('.'),
+            ],
+          });
+          break;
+
+        case 'property_bought':
+          out.push({
+            key,
+            seat,
+            kind: 'buy',
+            parts: [mention(seat), text(` acquired square ${ev.square} for ${ev.price} ${props.currencyLabel}.`)],
+          });
+          break;
+
+        case 'card_drawn':
+          out.push({
+            key,
+            seat,
+            kind: 'card',
+            parts: [
+              mention(seat),
+              text(` drew a ${ev.deck === 'chance' ? 'Market Event' : 'Board Memo'}.`),
+            ],
+          });
+          break;
+
+        case 'bribe_accepted':
+          out.push({
+            key,
+            seat,
+            kind: 'bribe',
+            amount: `${ev.amount} ${props.currencyLabel}`,
+            parts: [
+              mention(ev.from),
+              text(` paid `),
+              mention(seat),
+              text(` ${ev.amount} ${props.currencyLabel} to take fate. Binding.`),
+            ],
+          });
+          break;
+
+        case 'paid_tax':
+          out.push({
+            key,
+            seat,
+            kind: 'tax',
+            parts: [mention(seat), text(` lost ${ev.amount} ${props.currencyLabel} to costs.`)],
+          });
+          break;
+
+        case 'jailed':
+          out.push({ key, seat, kind: 'jail', parts: [mention(seat), text(' is on compliance hold.')] });
+          break;
+
+        case 'bankrupt':
+          out.push({ key, seat, kind: 'bust', parts: [mention(seat), text(' is out — bankrupt.')] });
+          break;
+
+        case 'match_finished':
+          out.push({
+            key,
+            seat: ev.winner,
+            kind: 'win',
+            parts: [mention(ev.winner), text(' wins the match.')],
+          });
+          break;
+      }
+    }
+  }
+  return out;
+});
+
+/** The priced option set, posted as a rich choice card (the bot_choices shape). */
+const optionCard = computed(() => props.actions?.length ? null : null);
+
+const kindIcon: Record<string, string> = {
+  roll: '🎲',
+  purchase: '💸',
+  fate: '➡️',
+  rent: '🏢',
+  buy: '📈',
+  card: '🃏',
+  bribe: '🤝',
+  tax: '📉',
+  jail: '⚖️',
+  bust: '💀',
+  win: '🏆',
+  talk: '💬',
+};
+
+function nameOf(seatIndex: number | null) {
+  if (seatIndex === null) return 'Table';
+  return props.seats.find((s) => s.seat_index === seatIndex)?.display_name ?? `Seat ${seatIndex + 1}`;
+}
+</script>
+
+<template>
+  <div class="bdv-chat" data-testid="bdv-chat">
+    <header class="bdv-chat-head">
+      <h3>Game chat</h3>
+      <span class="bdv-chat-sub">{{ entries.length }} messages</span>
+    </header>
+
+    <ol class="bdv-chat-feed" data-testid="bdv-chat-feed">
+      <li v-if="!entries.length" class="bdv-chat-empty">
+        The table is quiet. Roll to start the round.
+      </li>
+
+      <li
+        v-for="entry in entries"
+        :key="entry.key"
+        class="bdv-msg"
+        :class="[`is-${entry.kind}`, { 'is-you': entry.seat === yourSeat }]"
+        data-testid="bdv-chat-msg"
+      >
+        <span class="bdv-avatar">{{ kindIcon[entry.kind] || '•' }}</span>
+        <div class="bdv-bubble">
+          <span class="bdv-author">{{ nameOf(entry.seat) }}</span>
+          <p class="bdv-body">
+            <template v-for="(part, i) in entry.parts" :key="i">
+              <span
+                v-if="part.t === 'mention'"
+                class="bdv-mention"
+                :class="{ 'is-you': part.you }"
+                data-testid="bdv-mention"
+                >{{ part.v }}</span
+              ><span v-else>{{ part.v }}</span>
+            </template>
+          </p>
+
+          <div v-if="entry.dice" class="bdv-dice" data-testid="bdv-dice">
+            <span v-for="(d, i) in entry.dice" :key="i" class="bdv-die">{{ d }}</span>
+            <span class="bdv-die bdv-die--sum">{{ entry.dice[0] + entry.dice[1] }}</span>
+          </div>
+
+          <span v-if="entry.amount" class="bdv-amount">{{ entry.amount }}</span>
+        </div>
+      </li>
+    </ol>
+  </div>
+</template>
+
+<style scoped>
+.bdv-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.bdv-chat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e9ecef;
+  background: #f8f9fa;
+}
+.bdv-chat-head h3 { margin: 0; font-size: 15px; color: #2c3e50; }
+.bdv-chat-sub { font-size: 12px; color: #6c757d; }
+
+.bdv-chat-feed {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bdv-chat-empty { color: #6c757d; font-size: 13px; text-align: center; padding: 24px 8px; }
+
+.bdv-msg { display: flex; gap: 8px; align-items: flex-start; }
+
+.bdv-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #f1f3f5;
+  font-size: 13px;
+}
+
+.bdv-bubble {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  border-top-left-radius: 2px;
+  padding: 7px 11px;
+  max-width: 100%;
+}
+
+.bdv-msg.is-you .bdv-bubble { background: #e3f2fd; border-color: #bee0f7; }
+.bdv-msg.is-purchase .bdv-bubble { border-left: 3px solid #3498db; }
+.bdv-msg.is-bribe .bdv-bubble { border-left: 3px solid #f0a202; }
+.bdv-msg.is-rent .bdv-bubble { border-left: 3px solid #c0392b; }
+.bdv-msg.is-win .bdv-bubble { border-left: 3px solid #28a745; }
+
+.bdv-author {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6c757d;
+  margin-bottom: 1px;
+}
+
+.bdv-body { margin: 0; font-size: 13px; line-height: 1.45; color: #2c3e50; }
+
+.bdv-mention {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #dfe7ef;
+  color: #2c5d8a;
+  font-weight: 600;
+}
+.bdv-mention.is-you { background: #3498db; color: #fff; }
+
+.bdv-dice { display: flex; gap: 5px; margin-top: 6px; }
+.bdv-die {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ced4da;
+  border-radius: 5px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2c3e50;
+}
+.bdv-die--sum { background: #2c3e50; color: #fff; border-color: #2c3e50; }
+
+.bdv-amount {
+  display: inline-block;
+  margin-top: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #3498db;
+}
+</style>

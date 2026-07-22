@@ -7,20 +7,39 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import { api } from '@/api';
 import { useBdvMatchStore } from '../stores/bdvMatch';
 import BdvBoardCanvas from '../components/BdvBoardCanvas.vue';
 import BdvOptionCards from '../components/BdvOptionCards.vue';
+import BdvGameChat from '../components/BdvGameChat.vue';
 
 const route = useRoute();
 const store = useBdvMatchStore();
 const pollTimer = ref<number | null>(null);
+const actions = ref<any[]>([]);
 
 const matchId = computed(() => String(route.params.matchId));
 const seats = computed(() => store.matchState?.seats ?? []);
+const seatMeta = computed(() => store.match?.seats ?? []);
 const currencyLabel = computed(() => store.spec?.board?.currency_label ?? 'cr');
+const boardName = computed(() => store.spec?.board?.game_display_name || 'BizDevVibes');
+
+const SEAT_COLOURS = ['#3498db', '#e06666', '#28a745', '#f0a202', '#8e7cc3', '#17a2b8'];
+const seatColour = (i: number) => SEAT_COLOURS[i % SEAT_COLOURS.length];
+
+async function loadEvents() {
+  if (!matchId.value) return;
+  try {
+    const data = (await api.get(`/bdv/matches/${matchId.value}/events`)) as any;
+    actions.value = data.items ?? [];
+  } catch {
+    /* the feed is additive — a failed poll simply shows the last state */
+  }
+}
 
 async function refresh() {
   await store.refreshState();
+  await loadEvents();
 }
 
 function startPolling() {
@@ -33,7 +52,6 @@ function startPolling() {
     refresh();
   }, 2500);
 }
-
 function stopPolling() {
   if (pollTimer.value !== null) {
     window.clearInterval(pollTimer.value);
@@ -43,38 +61,54 @@ function stopPolling() {
 
 onMounted(async () => {
   await store.load(matchId.value);
+  await loadEvents();
   startPolling();
 });
-
 watch(matchId, async (id) => {
   await store.load(id);
+  await loadEvents();
 });
-
 onBeforeUnmount(stopPolling);
 
 /** Board click and chat-card tap funnel into the SAME action. */
-function choose(steps: number) {
-  return store.chooseOption(steps);
+async function act(fn: () => Promise<unknown>) {
+  await fn();
+  await loadEvents();
 }
+const choose = (steps: number) => act(() => store.chooseOption(steps));
 </script>
 
 <template>
   <div class="bdv-match" data-testid="bdv-match">
     <section class="bdv-pane-board">
-      <header class="bdv-header">
-        <h1>{{ store.spec?.board?.game_display_name || 'BizDevVibes' }}</h1>
-        <p v-if="store.isFinished" data-testid="bdv-finished">
-          {{ $t('bdv.match.finished') }}
-        </p>
-        <p v-else-if="store.isYourTurn" data-testid="bdv-your-turn">
-          {{ $t('bdv.match.yourMove') }}
-        </p>
+      <header class="bdv-topbar">
+        <div>
+          <h2>{{ boardName }}</h2>
+          <p class="bdv-phase" data-testid="bdv-phase">
+            <span v-if="store.isFinished">Match finished</span>
+            <span v-else-if="store.isYourTurn">Your move — {{ store.phase.replace('_', ' ') }}</span>
+            <span v-else>Waiting for {{ seatMeta[store.matchState?.turn_seat ?? 0]?.display_name }}</span>
+          </p>
+        </div>
+        <ul class="bdv-seatstrip" data-testid="bdv-seats">
+          <li
+            v-for="seat in seats"
+            :key="seat.index"
+            :class="{ you: seat.index === store.yourSeat, turn: seat.index === store.matchState?.turn_seat }"
+          >
+            <span class="dot" :style="{ background: seatColour(seat.index) }" />
+            <span class="nm">{{ seatMeta[seat.index]?.display_name || `Seat ${seat.index + 1}` }}</span>
+            <span class="cash">{{ seat.cash }} {{ currencyLabel }}</span>
+            <span v-if="seat.bankrupt" class="bust">out</span>
+          </li>
+        </ul>
       </header>
 
       <BdvBoardCanvas
         v-if="store.spec"
         :squares="store.squares"
         :seats="seats"
+        :seat-meta="seatMeta"
         :ownership="store.matchState?.ownership ?? {}"
         :option-by-target="store.optionByTarget"
         :your-seat="store.yourSeat"
@@ -89,37 +123,23 @@ function choose(steps: number) {
             :is-your-turn="store.isYourTurn"
             :currency-label="currencyLabel"
             :submitting="store.submitting"
-            @roll="store.roll()"
-            @close-negotiation="store.closeNegotiation()"
+            @roll="act(() => store.roll())"
+            @close-negotiation="act(() => store.closeNegotiation())"
             @choose="choose"
-            @end-turn="store.endTurn()"
-            @buy="store.buyProperty()"
+            @end-turn="act(() => store.endTurn())"
+            @buy="act(() => store.buyProperty())"
           />
         </template>
       </BdvBoardCanvas>
-
-      <ul class="bdv-seats" data-testid="bdv-seats">
-        <li v-for="seat in seats" :key="seat.index" :class="{ 'is-you': seat.index === store.yourSeat }">
-          <strong>{{ store.match?.seats?.[seat.index]?.display_name || `Seat ${seat.index + 1}` }}</strong>
-          <span>{{ seat.cash }} {{ currencyLabel }}</span>
-          <span v-if="seat.bankrupt" class="bdv-bankrupt">bankrupt</span>
-        </li>
-      </ul>
     </section>
 
-    <aside class="bdv-pane-chat" data-testid="bdv-chat">
-      <h2>{{ $t('bdv.match.chat') }}</h2>
-      <!--
-        The chat pane mounts the existing meinchat room widget when the bot
-        bridge is installed. It is deliberately NOT a second chat implementation
-        — that renderer already handles bot_choices cards.
-      -->
-      <div v-if="store.match?.chat_room_id" class="bdv-chat-mount">
-        <component :is="'meinchat-room'" :room-id="store.match.chat_room_id" />
-      </div>
-      <p v-else class="bdv-chat-fallback">
-        {{ $t('bdv.match.board') }} — {{ $t('bdv.match.yourMove') }}
-      </p>
+    <aside class="bdv-pane-chat">
+      <BdvGameChat
+        :actions="actions"
+        :seats="seatMeta"
+        :your-seat="store.yourSeat"
+        :currency-label="currencyLabel"
+      />
     </aside>
   </div>
 </template>
@@ -128,58 +148,63 @@ function choose(steps: number) {
 .bdv-match {
   display: grid;
   grid-template-columns: 70% 30%;
-  gap: 12px;
-  height: calc(100vh - 120px);
-  padding: 12px;
+  gap: 14px;
+  height: calc(100vh - 96px);
+  padding: 14px;
+  box-sizing: border-box;
 }
+
 .bdv-pane-board {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: 8px;
-}
-.bdv-pane-chat {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 8px;
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #d8dee6);
+  gap: 10px;
+  background: #fff;
+  border: 1px solid #e9ecef;
   border-radius: 8px;
-  overflow-y: auto;
+  padding: 14px;
 }
-.bdv-header h1 {
-  margin: 0;
-  font-size: 1.1rem;
-}
-.bdv-seats {
+
+.bdv-pane-chat { min-height: 0; }
+
+.bdv-topbar {
   display: flex;
-  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.bdv-topbar h2 { margin: 0; color: #2c3e50; font-size: 18px; }
+.bdv-phase { margin: 2px 0 0; color: #666; font-size: 13px; }
+
+.bdv-seatstrip {
+  display: flex;
+  gap: 8px;
+  margin: 0;
   padding: 0;
-  margin: 0;
   list-style: none;
-  font-size: 0.8rem;
+  flex-wrap: wrap;
 }
-.bdv-seats li {
+.bdv-seatstrip li {
   display: flex;
+  align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  background: var(--color-surface-2, #eceff3);
-  border-radius: 6px;
+  padding: 5px 10px;
+  border: 1px solid #e9ecef;
+  border-radius: 20px;
+  font-size: 12px;
+  color: #2c3e50;
+  background: #fff;
 }
-.bdv-seats li.is-you {
-  outline: 2px solid var(--color-primary, #3b6fd4);
-}
-.bdv-bankrupt {
-  color: var(--color-danger, #c0392b);
-}
-@media (max-width: 900px) {
-  .bdv-match {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-  .bdv-pane-chat {
-    max-height: 40vh;
-  }
+.bdv-seatstrip li.you { border-color: #3498db; background: #e3f2fd; }
+.bdv-seatstrip li.turn { box-shadow: 0 0 0 2px rgba(44, 62, 80, 0.18); }
+.dot { width: 9px; height: 9px; border-radius: 50%; }
+.nm { font-weight: 600; }
+.cash { color: #6c757d; }
+.bust { color: #c0392b; font-weight: 700; }
+
+@media (max-width: 1000px) {
+  .bdv-match { grid-template-columns: 1fr; height: auto; }
+  .bdv-pane-chat { height: 50vh; }
 }
 </style>
