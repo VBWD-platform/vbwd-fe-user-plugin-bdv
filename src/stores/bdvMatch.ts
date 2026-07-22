@@ -40,6 +40,21 @@ interface MatchState {
   pending_roll: number[] | null;
   seq: number;
   winner_seat: number | null;
+  trade_offers?: TradeOffer[];
+  trading_ready?: number[];
+  loans?: any[];
+  pending_demand?: any;
+}
+
+export interface TradeOffer {
+  id: number;
+  from_seat: number;
+  to_seat: number;
+  give_squares: number[];
+  give_credits: number;
+  want_squares: number[];
+  want_credits: number;
+  note: string;
 }
 
 export const useBdvMatchStore = defineStore('bdvMatch', {
@@ -57,6 +72,8 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
       | null,
     /** Server clock for the 60s rent auto-agree; display only. */
     rentDeadlineAt: null as string | null,
+    /** Server clock for the 5-minute privatisation window; display only. */
+    turnDeadlineAt: null as string | null,
     stateSeq: 0,
     loading: false,
     submitting: false,
@@ -120,6 +137,29 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
       );
       return seat?.cash ?? 0;
     },
+    /** True while the board is frozen for the privatisation window. */
+    isTrading(state): boolean {
+      return state.matchState?.phase === 'trading';
+    },
+    /** Offers put to you, awaiting your answer. */
+    incomingOffers(state): any[] {
+      return (state.matchState?.trade_offers ?? []).filter(
+        (offer: any) => offer.to_seat === state.yourSeat,
+      );
+    },
+    /** Offers you have made and nobody has answered yet. */
+    outgoingOffers(state): any[] {
+      return (state.matchState?.trade_offers ?? []).filter(
+        (offer: any) => offer.from_seat === state.yourSeat,
+      );
+    },
+    youAreReady(state): boolean {
+      return (state.matchState?.trading_ready ?? []).includes(state.yourSeat as number);
+    },
+    /** What each seat still needs to complete a stage — served during trading. */
+    stageNeeds(state): Record<string, Record<string, number[]>> {
+      return state.match?.stage_needs ?? {};
+    },
     isFinished(state): boolean {
       return state.matchState?.phase === 'finished';
     },
@@ -150,6 +190,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         this.yourSeat = data.your_seat;
         this.purchaseOffer = data.purchase_offer ?? null;
         this.rentDeadlineAt = data.rent_deadline_at ?? null;
+        this.turnDeadlineAt = data.turn_deadline_at ?? null;
         await this.refreshOptions();
       } catch (err: any) {
         this.error = err?.message ?? 'Failed to load match';
@@ -173,6 +214,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
       this.stateSeq = data.state_seq;
       this.purchaseOffer = data.purchase_offer ?? null;
       this.rentDeadlineAt = data.rent_deadline_at ?? null;
+      this.turnDeadlineAt = data.turn_deadline_at ?? null;
       await this.refreshOptions();
     },
 
@@ -264,6 +306,34 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     // --- table economy (S146-12)
     transferCredits(toSeat: number, amount: number) {
       return this.submit('transfer_credits', { to_seat: toSeat, amount });
+    },
+    // --- privatisation trading window (S146-13 / S146-14)
+    /**
+     * Terms are always FROM you — the server takes the proposing seat from your
+     * session and ignores any seat in the body, so there is nothing to send.
+     */
+    proposeTrade(terms: {
+      to_seat: number;
+      give_squares?: number[];
+      give_credits?: number;
+      want_squares?: number[];
+      want_credits?: number;
+      note?: string;
+    }) {
+      return this.submit('propose_trade', terms as Record<string, unknown>);
+    },
+    acceptTrade(offerId: number) {
+      return this.submit('accept_trade', { offer_id: offerId });
+    },
+    /** Also how you withdraw your own offer — same verb, either side. */
+    declineTrade(offerId: number) {
+      return this.submit('decline_trade', { offer_id: offerId });
+    },
+    counterTrade(offerId: number, terms: Record<string, unknown>) {
+      return this.submit('counter_trade', { offer_id: offerId, ...terms });
+    },
+    tradingReady() {
+      return this.submit('trading_ready');
     },
   },
 });

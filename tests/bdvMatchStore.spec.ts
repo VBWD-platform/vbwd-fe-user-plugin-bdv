@@ -109,3 +109,101 @@ describe('bdvMatch store', () => {
     expect(store.isYourTurn).toBe(true);
   });
 });
+
+describe('the privatisation trading window', () => {
+  const TRADING = {
+    ...MATCH,
+    stage_needs: { '0': { lead_gen: [3] } },
+    turn_deadline_at: '2026-07-22T10:05:00Z',
+    state: {
+      ...MATCH.state,
+      phase: 'trading',
+      trading_ready: [1],
+      trade_offers: [
+        {
+          id: 1,
+          from_seat: 1,
+          to_seat: 0,
+          give_squares: [3],
+          give_credits: 0,
+          want_squares: [],
+          want_credits: 400,
+          note: 'completing a stage',
+        },
+        {
+          id: 2,
+          from_seat: 0,
+          to_seat: 1,
+          give_squares: [],
+          give_credits: 200,
+          want_squares: [6],
+          want_credits: 0,
+          note: '',
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options') ? Promise.resolve(OPTIONS) : Promise.resolve(TRADING),
+    );
+  });
+
+  it('splits offers into the ones you must answer and the ones you are waiting on', async () => {
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.isTrading).toBe(true);
+    expect(store.incomingOffers.map((o: any) => o.id)).toEqual([1]);
+    expect(store.outgoingOffers.map((o: any) => o.id)).toEqual([2]);
+  });
+
+  it('knows whether you have already declared yourself done', async () => {
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.youAreReady).toBe(false);
+    store.yourSeat = 1;
+    expect(store.youAreReady).toBe(true);
+  });
+
+  it('surfaces the window deadline and what your stages still need', async () => {
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.turnDeadlineAt).toBe('2026-07-22T10:05:00Z');
+    expect(store.stageNeeds['0'].lead_gen).toEqual([3]);
+  });
+
+  it('never sends a proposing seat — the server takes it from the session', async () => {
+    // The first cut read from_seat off the body, which let any seat author a
+    // trade giving away someone else's squares.
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    (api.post as any).mockResolvedValue({ state_seq: 8, state: TRADING.state, events: [] });
+    await store.proposeTrade({ to_seat: 1, want_squares: [3], give_credits: 500 });
+
+    const [, body] = (api.post as any).mock.calls[0];
+    expect(body.type).toBe('propose_trade');
+    expect(body.payload).not.toHaveProperty('from_seat');
+    expect(body.payload.to_seat).toBe(1);
+  });
+
+  it('answers an offer by id alone', async () => {
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    (api.post as any).mockResolvedValue({ state_seq: 8, state: TRADING.state, events: [] });
+
+    await store.acceptTrade(1);
+    expect((api.post as any).mock.calls[0][1]).toMatchObject({
+      type: 'accept_trade',
+      payload: { offer_id: 1 },
+    });
+
+    await store.counterTrade(1, { give_squares: [6], want_squares: [3] });
+    expect((api.post as any).mock.calls[1][1]).toMatchObject({
+      type: 'counter_trade',
+      payload: { offer_id: 1, give_squares: [6], want_squares: [3] },
+    });
+  });
+});

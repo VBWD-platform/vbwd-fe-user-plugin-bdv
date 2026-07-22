@@ -14,6 +14,7 @@ import BdvOptionCards from '../components/BdvOptionCards.vue';
 import BdvGameChat from '../components/BdvGameChat.vue';
 import BdvRentModal from '../components/BdvRentModal.vue';
 import BdvEstatePanel from '../components/BdvEstatePanel.vue';
+import BdvTradeScreen from '../components/BdvTradeScreen.vue';
 
 const route = useRoute();
 const store = useBdvMatchStore();
@@ -46,6 +47,10 @@ const countdown = computed(() => {
 });
 
 const showEstate = ref(false);
+/** Squares locked as collateral cannot be traded — the same rule the server applies. */
+const pledged = computed(() =>
+  (store.matchState?.loans ?? []).flatMap((loan: any) => loan.collateral),
+);
 const maxHouses = computed(() => store.spec?.board?.max_houses ?? 5);
 /** How short you are on the outstanding demand, if any. */
 const shortfall = computed(() => {
@@ -105,7 +110,11 @@ function startPolling() {
   // Deliberately not SSE: a turn-based game does not need a long-lived stream,
   // and SSE behind the proxy has bitten this platform twice.
   pollTimer.value = window.setInterval(() => {
-    if (document.hidden || store.isYourTurn || store.isFinished) return;
+    if (document.hidden || store.isFinished) return;
+    // During trading everyone is acting at once, so the usual "poll only when
+    // it is not your turn" rule would leave the turn-holder staring at a stale
+    // offer list for the whole window.
+    if (store.isYourTurn && !store.isTrading) return;
     refresh();
   }, 2500);
 }
@@ -239,6 +248,29 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
           so friends can find this table — or start now and let agents fill the rest.
         </p>
       </section>
+
+      <BdvTradeScreen
+        v-else-if="store.isTrading && store.yourSeat !== null"
+        :squares="store.squares"
+        :seats="seats"
+        :seat-meta="seatMeta"
+        :ownership="store.matchState?.ownership ?? {}"
+        :houses="store.matchState?.houses ?? {}"
+        :pledged="pledged"
+        :offers="store.matchState?.trade_offers ?? []"
+        :your-seat="store.yourSeat"
+        :cash="store.myCash"
+        :currency-label="currencyLabel"
+        :deadline-at="store.turnDeadlineAt"
+        :ready="store.youAreReady"
+        :submitting="store.submitting"
+        :stage-needs="store.stageNeeds"
+        @propose="(terms) => act(() => store.proposeTrade(terms as any))"
+        @accept="(id) => act(() => store.acceptTrade(id))"
+        @decline="(id) => act(() => store.declineTrade(id))"
+        @counter="(id, terms) => act(() => store.counterTrade(id, terms))"
+        @ready="act(() => store.tradingReady())"
+      />
 
       <BdvBoardCanvas
         v-else-if="store.spec"
