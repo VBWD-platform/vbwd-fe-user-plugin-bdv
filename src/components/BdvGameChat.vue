@@ -27,6 +27,15 @@ const props = defineProps<{
   seats: Seat[];
   yourSeat: number | null;
   currencyLabel: string;
+  /** Human messages from the match's meinchat room. */
+  messages?: Array<{ id: string; seat: number | null; body: string }>;
+  cash?: number;
+  disabled?: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: 'send', body: string): void;
+  (e: 'pay', toSeat: number, amount: number): void;
 }>();
 
 /** @nickname for a seat — spaces stripped so the chip is one token. */
@@ -120,6 +129,135 @@ const entries = computed<ChatEntry[]>(() => {
             parts: [
               mention(seat),
               text(ev.is_sum ? ' took the sum — fate, free.' : ` moved +${ev.steps} for free.`),
+            ],
+          });
+          break;
+
+        case 'rent_demanded':
+          out.push({
+            key,
+            seat,
+            kind: 'demand',
+            amount: `${ev.amount} ${props.currencyLabel}`,
+            parts: [
+              mention(ev.to),
+              text(` demands ${ev.amount} ${props.currencyLabel} rent from `),
+              mention(seat),
+              text('.'),
+            ],
+          });
+          break;
+
+        case 'rent_countered':
+          out.push({
+            key,
+            seat,
+            kind: 'bribe',
+            amount: `${ev.offered} ${props.currencyLabel}`,
+            parts: [
+              mention(seat),
+              text(` offers `),
+              mention(ev.to),
+              text(` ${ev.offered} instead of ${ev.rent}.`),
+            ],
+          });
+          break;
+
+        case 'rent_insisted':
+          out.push({
+            key,
+            seat,
+            kind: 'rent',
+            parts: [
+              mention(seat),
+              text(' insists on the full '),
+              text(`${ev.amount} ${props.currencyLabel}.`),
+            ],
+          });
+          break;
+
+        case 'house_built':
+          out.push({
+            key,
+            seat,
+            kind: 'build',
+            parts: [mention(seat), text(` built on square ${ev.square} for ${ev.cost}.`)],
+          });
+          break;
+
+        case 'house_sold':
+          out.push({
+            key,
+            seat,
+            kind: 'build',
+            parts: [mention(seat), text(` sold a building for ${ev.refund}.`)],
+          });
+          break;
+
+        case 'square_sold':
+          out.push({
+            key,
+            seat,
+            kind: 'build',
+            parts: [mention(seat), text(` sold square ${ev.square} back for ${ev.amount}.`)],
+          });
+          break;
+
+        case 'loan_taken':
+          out.push({
+            key,
+            seat,
+            kind: 'loan',
+            amount: `${ev.amount} ${props.currencyLabel}`,
+            parts: [mention(seat), text(` borrowed ${ev.amount} against their book.`)],
+          });
+          break;
+
+        case 'loan_repaid':
+          out.push({
+            key,
+            seat,
+            kind: 'loan',
+            parts: [
+              mention(seat),
+              text(ev.cleared ? ' cleared a loan.' : ` repaid ${ev.amount}.`),
+            ],
+          });
+          break;
+
+        case 'interest_charged':
+          out.push({
+            key,
+            seat,
+            kind: 'interest',
+            amount: `${ev.amount} ${props.currencyLabel}`,
+            parts: [
+              mention(seat),
+              text(` paid ${ev.amount} interest — one lap, one cycle.`),
+            ],
+          });
+          break;
+
+        case 'collateral_seized':
+          out.push({
+            key,
+            seat,
+            kind: 'bust',
+            parts: [mention(seat), text(' lost their collateral to the bank.')],
+          });
+          break;
+
+        case 'credits_transferred':
+          out.push({
+            key,
+            seat,
+            kind: 'transfer',
+            amount: `${ev.amount} ${props.currencyLabel}`,
+            parts: [
+              mention(seat),
+              text(` sent ${ev.amount} ${props.currencyLabel} to `),
+              mention(ev.to),
+              text('.'),
             ],
           });
           break;
@@ -219,6 +357,11 @@ const kindIcon: Record<string, string> = {
   bust: '💀',
   win: '🏆',
   talk: '💬',
+  demand: '📨',
+  build: '🏗️',
+  loan: '🏦',
+  interest: '⏳',
+  transfer: '💰',
 };
 
 /**
@@ -268,6 +411,52 @@ onMounted(async () => {
   await nextTick();
   scrollToBottom(false);
 });
+
+/**
+ * The composer. `/pay @name 500` is parsed here into the engine's
+ * `transfer_credits` action — money is a MOVE, not a message, so it goes
+ * through the match rather than the chat.
+ */
+const draft = ref('');
+const composerError = ref<string | null>(null);
+
+function seatByHandle(handle: string): number | null {
+  const wanted = handle.replace(/^@/, '').toLowerCase();
+  const seat = props.seats.find(
+    (s) => s.display_name.replace(/\s+/g, '').toLowerCase() === wanted,
+  );
+  return seat ? seat.seat_index : null;
+}
+
+function send() {
+  const body = draft.value.trim();
+  if (!body) return;
+  composerError.value = null;
+
+  const pay = body.match(/^\/pay\s+(\S+)\s+(\d+)$/i);
+  if (pay) {
+    const seat = seatByHandle(pay[1]);
+    const amount = Number(pay[2]);
+    if (seat === null) {
+      composerError.value = `No seat called ${pay[1]}.`;
+      return;
+    }
+    if (seat === props.yourSeat) {
+      composerError.value = 'You cannot pay yourself.';
+      return;
+    }
+    if (props.cash !== undefined && amount > props.cash) {
+      composerError.value = `You only have ${props.cash} ${props.currencyLabel}.`;
+      return;
+    }
+    emit('pay', seat, amount);
+    draft.value = '';
+    return;
+  }
+
+  emit('send', body);
+  draft.value = '';
+}
 
 function nameOf(seatIndex: number | null) {
   if (seatIndex === null) return 'Table';
@@ -322,7 +511,39 @@ function nameOf(seatIndex: number | null) {
           <span v-if="entry.amount" class="bdv-amount">{{ entry.amount }}</span>
         </div>
       </li>
+
+      <li
+        v-for="message in messages ?? []"
+        :key="message.id"
+        class="bdv-msg is-talk"
+        :class="{ 'is-you': message.seat === yourSeat }"
+        data-testid="bdv-chat-human"
+      >
+        <span class="bdv-avatar">🗨️</span>
+        <div class="bdv-bubble">
+          <span class="bdv-author">{{ nameOf(message.seat) }}</span>
+          <p class="bdv-body">{{ message.body }}</p>
+        </div>
+      </li>
     </ol>
+
+    <form class="bdv-composer" data-testid="bdv-chat-composer" @submit.prevent="send">
+      <input
+        v-model="draft"
+        class="bdv-input"
+        type="text"
+        maxlength="500"
+        :disabled="disabled"
+        placeholder="Say something, or /pay @name 500"
+        data-testid="bdv-chat-input"
+      />
+      <button class="bdv-send" type="submit" :disabled="disabled || !draft.trim()" data-testid="bdv-chat-send">
+        Send
+      </button>
+    </form>
+    <p v-if="composerError" class="bdv-composer-error" data-testid="bdv-composer-error">
+      {{ composerError }}
+    </p>
 
     <button
       v-if="!atBottom"
@@ -449,10 +670,36 @@ function nameOf(seatIndex: number | null) {
 }
 
 /* Floating "there are updates" button — only while the reader has scrolled up. */
+.bdv-composer {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid #e9ecef;
+  background: #fff;
+}
+.bdv-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #2c3e50;
+}
+.bdv-input:focus { outline: none; border-color: #80bdff; box-shadow: 0 0 0 2px rgba(0,123,255,.2); }
+.bdv-send {
+  padding: 7px 13px; border: 1px solid #3498db; border-radius: 6px;
+  background: #3498db; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.bdv-send:disabled { opacity: .5; cursor: not-allowed; }
+.bdv-composer-error {
+  margin: 0; padding: 4px 10px 8px; font-size: 12px; color: #c0392b; background: #fff;
+}
+
 .bdv-jump {
   position: absolute;
   right: 14px;
-  bottom: 14px;
+  bottom: 62px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

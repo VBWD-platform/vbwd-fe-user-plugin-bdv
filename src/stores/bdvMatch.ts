@@ -55,6 +55,8 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     purchaseOffer: null as
       | { square_index: number; name: string; price: number; affordable: boolean }
       | null,
+    /** Server clock for the 60s rent auto-agree; display only. */
+    rentDeadlineAt: null as string | null,
     stateSeq: 0,
     loading: false,
     submitting: false,
@@ -76,6 +78,47 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     /** Only offer the button when the server says the move would succeed. */
     canBuy(state): boolean {
       return !!state.purchaseOffer && state.purchaseOffer.affordable;
+    },
+    /** The outstanding rent demand, if any. */
+    demand(state): any | null {
+      return state.matchState?.pending_demand ?? null;
+    },
+    /** True when YOU are the one who owes. */
+    youOweRent(state): boolean {
+      const d = state.matchState?.pending_demand;
+      return !!d && d.debtor_seat === state.yourSeat;
+    },
+    /** True when someone has countered YOUR rent and you must answer. */
+    awaitingYourAnswer(state): boolean {
+      const d = state.matchState?.pending_demand;
+      return !!d && d.owner_seat === state.yourSeat && d.offered !== null;
+    },
+    myLoans(state): any[] {
+      return (state.matchState?.loans ?? []).filter((l: any) => l.seat === state.yourSeat);
+    },
+    myDebt(): number {
+      return this.myLoans.reduce((sum: number, l: any) => sum + l.outstanding, 0);
+    },
+    /** Squares you own, with build/sell context for the manage popup. */
+    myEstate(state): any[] {
+      const ownership = state.matchState?.ownership ?? {};
+      const houses = state.matchState?.houses ?? {};
+      const pledged = new Set(
+        (state.matchState?.loans ?? []).flatMap((l: any) => l.collateral),
+      );
+      return (state.spec?.squares ?? [])
+        .filter((sq: any) => ownership[String(sq.index)] === state.yourSeat)
+        .map((sq: any) => ({
+          ...sq,
+          houses: houses[String(sq.index)] ?? 0,
+          pledged: pledged.has(sq.index),
+        }));
+    },
+    myCash(state): number {
+      const seat = (state.matchState?.seats ?? []).find(
+        (s: any) => s.index === state.yourSeat,
+      );
+      return seat?.cash ?? 0;
     },
     isFinished(state): boolean {
       return state.matchState?.phase === 'finished';
@@ -106,6 +149,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         this.stateSeq = data.state_seq;
         this.yourSeat = data.your_seat;
         this.purchaseOffer = data.purchase_offer ?? null;
+        this.rentDeadlineAt = data.rent_deadline_at ?? null;
         await this.refreshOptions();
       } catch (err: any) {
         this.error = err?.message ?? 'Failed to load match';
@@ -128,6 +172,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
       this.matchState = data.state;
       this.stateSeq = data.state_seq;
       this.purchaseOffer = data.purchase_offer ?? null;
+      this.rentDeadlineAt = data.rent_deadline_at ?? null;
       await this.refreshOptions();
     },
 
@@ -177,6 +222,39 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     },
     endTurn() {
       return this.submit('end_turn');
+    },
+    // --- rent demand (S146-9)
+    agreeToPay() {
+      return this.submit('agree_to_pay');
+    },
+    offerRent(amount: number) {
+      return this.submit('offer_rent', { amount });
+    },
+    acceptRentOffer() {
+      return this.submit('accept_rent_offer');
+    },
+    insistOnFullRent() {
+      return this.submit('insist_on_full_rent');
+    },
+    // --- solvency + assets (S146-10 / S146-11)
+    buildHouse(square: number) {
+      return this.submit('build_house', { square });
+    },
+    sellHouse(square: number) {
+      return this.submit('sell_house', { square });
+    },
+    sellSquare(square: number) {
+      return this.submit('sell_square', { square });
+    },
+    borrow(squares: number[], amount: number) {
+      return this.submit('borrow', { squares, amount });
+    },
+    repayLoan(loanId: number, amount: number) {
+      return this.submit('repay_loan', { loan_id: loanId, amount });
+    },
+    // --- table economy (S146-12)
+    transferCredits(toSeat: number, amount: number) {
+      return this.submit('transfer_credits', { to_seat: toSeat, amount });
     },
   },
 });

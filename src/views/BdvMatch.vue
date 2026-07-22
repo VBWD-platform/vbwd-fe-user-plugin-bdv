@@ -12,6 +12,8 @@ import { useBdvMatchStore } from '../stores/bdvMatch';
 import BdvBoardCanvas from '../components/BdvBoardCanvas.vue';
 import BdvOptionCards from '../components/BdvOptionCards.vue';
 import BdvGameChat from '../components/BdvGameChat.vue';
+import BdvRentModal from '../components/BdvRentModal.vue';
+import BdvEstatePanel from '../components/BdvEstatePanel.vue';
 
 const route = useRoute();
 const store = useBdvMatchStore();
@@ -42,6 +44,37 @@ const countdown = computed(() => {
   const total = Math.floor(ms / 1000);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 });
+
+const showEstate = ref(false);
+const maxHouses = computed(() => store.spec?.board?.max_houses ?? 5);
+/** How short you are on the outstanding demand, if any. */
+const shortfall = computed(() => {
+  const demand = store.demand;
+  if (!demand || demand.debtor_seat !== store.yourSeat) return 0;
+  return Math.max(0, (demand.due ?? demand.amount) - store.myCash);
+});
+const debtorCash = computed(() => {
+  const demand = store.demand;
+  if (!demand) return 0;
+  return (
+    (store.matchState?.seats ?? []).find((s: any) => s.index === demand.debtor_seat)
+      ?.cash ?? 0
+  );
+});
+/** Show the rent modal to the two seats it concerns. */
+const showRentModal = computed(
+  () => !!store.demand && (store.youOweRent || store.demand.owner_seat === store.yourSeat),
+);
+
+async function sendMessage(body: string) {
+  // Human messages go to the match's meinchat room; the bridge posts there too.
+  try {
+    await api.post(`/bdv/matches/${matchId.value}/messages`, { body });
+  } catch {
+    /* the feed is additive — a failed send simply does not appear */
+  }
+  await loadEvents();
+}
 
 async function startNow() {
   await api.post(`/bdv/matches/${matchId.value}/start-now`, {});
@@ -125,6 +158,15 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
             <span v-else>Waiting for {{ seatMeta[store.matchState?.turn_seat ?? 0]?.display_name }}</span>
           </p>
         </div>
+        <button
+          v-if="!isWaiting && !store.isFinished"
+          class="bdv-manage"
+          data-testid="bdv-manage"
+          @click="showEstate = true"
+        >
+          Manage book
+          <span v-if="store.myDebt" class="debt">{{ store.myDebt }} owed</span>
+        </button>
         <ul class="bdv-seatstrip" data-testid="bdv-seats">
           <li
             v-for="seat in seats"
@@ -138,6 +180,40 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
           </li>
         </ul>
       </header>
+
+      <BdvRentModal
+        v-if="showRentModal"
+        :demand="store.demand"
+        :seats="seatMeta"
+        :your-seat="store.yourSeat"
+        :cash="store.myCash"
+        :debtor-cash="debtorCash"
+        :currency-label="currencyLabel"
+        :deadline-at="store.rentDeadlineAt"
+        :submitting="store.submitting"
+        @agree="act(() => store.agreeToPay())"
+        @offer="(amount) => act(() => store.offerRent(amount))"
+        @accept="act(() => store.acceptRentOffer())"
+        @insist="act(() => store.insistOnFullRent())"
+        @raise-cash="showEstate = true"
+      />
+
+      <BdvEstatePanel
+        v-if="showEstate"
+        :estate="store.myEstate"
+        :loans="store.myLoans"
+        :cash="store.myCash"
+        :currency-label="currencyLabel"
+        :max-houses="maxHouses"
+        :submitting="store.submitting"
+        :shortfall="shortfall"
+        @build="(sq) => act(() => store.buildHouse(sq))"
+        @sell-house="(sq) => act(() => store.sellHouse(sq))"
+        @sell-square="(sq) => act(() => store.sellSquare(sq))"
+        @borrow="(sqs, amount) => act(() => store.borrow(sqs, amount))"
+        @repay="(id, amount) => act(() => store.repayLoan(id, amount))"
+        @close="showEstate = false"
+      />
 
       <section v-if="isWaiting" class="bdv-waiting-room" data-testid="bdv-waiting-room">
         <h3>Waiting for players</h3>
@@ -198,6 +274,10 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
         :seats="seatMeta"
         :your-seat="store.yourSeat"
         :currency-label="currencyLabel"
+        :cash="store.myCash"
+        :disabled="store.isFinished"
+        @send="sendMessage"
+        @pay="(seat, amount) => act(() => store.transferCredits(seat, amount))"
       />
     </aside>
   </div>
@@ -214,6 +294,7 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
 }
 
 .bdv-pane-board {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -224,7 +305,24 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
   padding: 14px;
 }
 
-.bdv-pane-chat { min-height: 0; }
+.bdv-pane-chat { position: relative; min-height: 0; }
+
+.bdv-manage {
+  align-self: center;
+  padding: 6px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 16px;
+  background: #fff;
+  color: #2c3e50;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bdv-manage:hover { background: #f8f9fa; }
+.bdv-manage .debt {
+  margin-left: 6px; padding: 1px 7px; border-radius: 9px;
+  background: #fff5f5; color: #c0392b; font-weight: 700;
+}
 
 .bdv-topbar {
   display: flex;
