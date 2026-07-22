@@ -134,7 +134,7 @@ const REASON_TEXT: Record<string, string> = {
     </template>
 
     <template v-else-if="isYourTurn">
-      <p class="bdv-lead">Resolve your turn</p>
+      <p class="bdv-lead">{{ purchaseOffer ? 'This square is for sale' : 'Resolving…' }}</p>
 
       <!-- Only offered when the server says the purchase would actually succeed.
            A button that always fails is worse than no button. -->
@@ -155,9 +155,19 @@ const REASON_TEXT: Record<string, string> = {
         {{ purchaseOffer.name }} costs {{ purchaseOffer.price }} {{ currencyLabel }} — you cannot cover it.
       </p>
 
-      <button class="bdv-cta" data-testid="bdv-end-turn" :disabled="submitting" @click="emit('end-turn')">
-        End turn
+      <!-- Only reachable when there IS something to decide: a turn with no
+           purchase on offer ends itself server-side, so this button is never
+           the sole content of the panel. -->
+      <button
+        v-if="purchaseOffer"
+        class="bdv-cta"
+        data-testid="bdv-end-turn"
+        :disabled="submitting"
+        @click="emit('end-turn')"
+      >
+        {{ purchaseOffer.affordable ? 'Skip it' : 'End turn' }}
       </button>
+      <p v-else class="bdv-hint">Nothing to decide — moving on.</p>
     </template>
 
     <p v-else-if="yourSeat === null" class="bdv-waiting" data-testid="bdv-watching">
