@@ -181,6 +181,7 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
             :is-your-turn="store.isYourTurn"
             :currency-label="currencyLabel"
             :submitting="store.submitting"
+            :purchase-offer="store.purchaseOffer"
             @roll="act(() => store.roll())"
             @close-negotiation="act(() => store.closeNegotiation())"
             @choose="choose"

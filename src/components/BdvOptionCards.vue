@@ -14,6 +14,13 @@ defineProps<{
   isYourTurn: boolean;
   currencyLabel: string;
   submitting: boolean;
+  /** Server-computed. Null means this square simply cannot be bought. */
+  purchaseOffer?: {
+    square_index: number;
+    name: string;
+    price: number;
+    affordable: boolean;
+  } | null;
 }>();
 
 const emit = defineEmits<{
@@ -85,14 +92,29 @@ const REASON_TEXT: Record<string, string> = {
 
     <template v-else-if="isYourTurn">
       <p class="bdv-lead">Resolve your turn</p>
-      <div class="bdv-row">
-        <button class="bdv-cta bdv-cta--ghost" data-testid="bdv-buy" :disabled="submitting" @click="emit('buy')">
-          Buy this square
-        </button>
-        <button class="bdv-cta" data-testid="bdv-end-turn" :disabled="submitting" @click="emit('end-turn')">
-          End turn
-        </button>
-      </div>
+
+      <!-- Only offered when the server says the purchase would actually succeed.
+           A button that always fails is worse than no button. -->
+      <button
+        v-if="purchaseOffer && purchaseOffer.affordable"
+        class="bdv-cta bdv-cta--ghost"
+        data-testid="bdv-buy"
+        :disabled="submitting"
+        @click="emit('buy')"
+      >
+        Buy {{ purchaseOffer.name }} — {{ purchaseOffer.price }} {{ currencyLabel }}
+      </button>
+      <p
+        v-else-if="purchaseOffer"
+        class="bdv-hint"
+        data-testid="bdv-buy-unaffordable"
+      >
+        {{ purchaseOffer.name }} costs {{ purchaseOffer.price }} {{ currencyLabel }} — you cannot cover it.
+      </p>
+
+      <button class="bdv-cta" data-testid="bdv-end-turn" :disabled="submitting" @click="emit('end-turn')">
+        End turn
+      </button>
     </template>
 
     <p v-else class="bdv-waiting">Waiting for the other seats…</p>

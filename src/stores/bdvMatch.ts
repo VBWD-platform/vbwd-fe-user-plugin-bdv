@@ -51,6 +51,10 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     options: [] as OptionQuote[],
     offers: [] as any[],
     yourSeat: null as number | null,
+    /** Server-computed: the square you could buy right now, or null. */
+    purchaseOffer: null as
+      | { square_index: number; name: string; price: number; affordable: boolean }
+      | null,
     stateSeq: 0,
     loading: false,
     submitting: false,
@@ -68,6 +72,10 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     },
     phase(state): string {
       return state.matchState?.phase ?? 'await_roll';
+    },
+    /** Only offer the button when the server says the move would succeed. */
+    canBuy(state): boolean {
+      return !!state.purchaseOffer && state.purchaseOffer.affordable;
     },
     isFinished(state): boolean {
       return state.matchState?.phase === 'finished';
@@ -97,6 +105,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         this.matchState = data.state;
         this.stateSeq = data.state_seq;
         this.yourSeat = data.your_seat;
+        this.purchaseOffer = data.purchase_offer ?? null;
         await this.refreshOptions();
       } catch (err: any) {
         this.error = err?.message ?? 'Failed to load match';
@@ -118,6 +127,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
       this.match = data;
       this.matchState = data.state;
       this.stateSeq = data.state_seq;
+      this.purchaseOffer = data.purchase_offer ?? null;
       await this.refreshOptions();
     },
 
