@@ -2,17 +2,19 @@
 /**
  * The game chat — rich content over the match's own event stream.
  *
- * IMPORTANT about what this is and is not: the bot bridge (S146-4) is not built
- * yet, so this does NOT talk to meinchat. It renders the match's append-only
- * action log as rich cards, plus deterministic table talk derived from the same
- * events. Every number shown comes from the server; nothing here invents state.
- * When the bridge lands, the same card shapes arrive as `bot_choices` messages
- * from a real meinchat room and this component becomes the renderer for them.
+ * It renders the match's append-only action log as rich cards, plus
+ * deterministic table talk derived from the same events. Every number shown
+ * comes from the server; nothing here invents state.
+ *
+ * The bot bridge (S146-4) now exposes the SAME game over chat transports, using
+ * `bot_choices` cards whose `hint` carries the price. This component is the
+ * in-app rendering of that identical event stream — one game, two surfaces, one
+ * service path behind both.
  *
  * Mentions: seats address each other as @nickname, rendered as chips. The
  * mention target is resolved from the seat list, so a rename follows through.
  */
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 interface Seat {
   seat_index: number;
@@ -204,9 +206,6 @@ const entries = computed<ChatEntry[]>(() => {
   return out;
 });
 
-/** The priced option set, posted as a rich choice card (the bot_choices shape). */
-const optionCard = computed(() => props.actions?.length ? null : null);
-
 const kindIcon: Record<string, string> = {
   roll: '🎲',
   purchase: '💸',
@@ -222,6 +221,54 @@ const kindIcon: Record<string, string> = {
   talk: '💬',
 };
 
+/**
+ * Scroll behaviour.
+ *
+ * Stick to the bottom while the reader is already there — that is the normal
+ * case and they want the newest move. The moment they scroll up they are
+ * READING, so never yank them back; show a floating button with the unread
+ * count instead, and let them choose to jump.
+ */
+const feed = ref<HTMLElement | null>(null);
+const atBottom = ref(true);
+const unread = ref(0);
+
+/** A few px of slack so a sub-pixel scroll position still counts as "bottom". */
+const BOTTOM_SLACK = 24;
+
+function updateAtBottom() {
+  const element = feed.value;
+  if (!element) return;
+  const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+  atBottom.value = distance <= BOTTOM_SLACK;
+  if (atBottom.value) unread.value = 0;
+}
+
+function scrollToBottom(smooth = true) {
+  const element = feed.value;
+  if (!element) return;
+  element.scrollTo({ top: element.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  unread.value = 0;
+  atBottom.value = true;
+}
+
+watch(
+  () => entries.value.length,
+  async (next, previous) => {
+    await nextTick();
+    if (atBottom.value) {
+      scrollToBottom(previous !== undefined);
+    } else if (previous !== undefined && next > previous) {
+      unread.value += next - previous;
+    }
+  },
+);
+
+onMounted(async () => {
+  await nextTick();
+  scrollToBottom(false);
+});
+
 function nameOf(seatIndex: number | null) {
   if (seatIndex === null) return 'Table';
   return props.seats.find((s) => s.seat_index === seatIndex)?.display_name ?? `Seat ${seatIndex + 1}`;
@@ -235,7 +282,12 @@ function nameOf(seatIndex: number | null) {
       <span class="bdv-chat-sub">{{ entries.length }} messages</span>
     </header>
 
-    <ol class="bdv-chat-feed" data-testid="bdv-chat-feed">
+    <ol
+      ref="feed"
+      class="bdv-chat-feed"
+      data-testid="bdv-chat-feed"
+      @scroll.passive="updateAtBottom"
+    >
       <li v-if="!entries.length" class="bdv-chat-empty">
         The table is quiet. Roll to start the round.
       </li>
@@ -271,11 +323,24 @@ function nameOf(seatIndex: number | null) {
         </div>
       </li>
     </ol>
+
+    <button
+      v-if="!atBottom"
+      class="bdv-jump"
+      :class="{ 'has-unread': unread > 0 }"
+      data-testid="bdv-jump-to-latest"
+      :title="unread ? `${unread} new message${unread === 1 ? '' : 's'}` : 'Jump to latest'"
+      @click="scrollToBottom()"
+    >
+      <span class="arrow">↓</span>
+      <span v-if="unread" class="count" data-testid="bdv-unread-count">{{ unread > 99 ? '99+' : unread }}</span>
+    </button>
   </div>
 </template>
 
 <style scoped>
 .bdv-chat {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -381,5 +446,44 @@ function nameOf(seatIndex: number | null) {
   font-size: 12px;
   font-weight: 700;
   color: #3498db;
+}
+
+/* Floating "there are updates" button — only while the reader has scrolled up. */
+.bdv-jump {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #2c85c4;
+  border-radius: 18px;
+  background: #3498db;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(44, 62, 80, 0.28);
+  transition: transform 0.12s ease, background 0.15s;
+}
+.bdv-jump:hover { background: #2c85c4; transform: translateY(-1px); }
+.bdv-jump .arrow { line-height: 1; }
+.bdv-jump .count {
+  font-size: 12px;
+  padding-left: 2px;
+}
+.bdv-jump.has-unread { animation: bdv-nudge 1.6s ease-in-out 2; }
+
+@keyframes bdv-nudge {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bdv-jump { animation: none; transition: none; }
 }
 </style>
