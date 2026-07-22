@@ -192,6 +192,11 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         })) as any;
         this.matchState = data.state;
         this.stateSeq = data.state_seq;
+        // The server recomputes this after every action. Not refreshing it was
+        // the cause of a stale "Buy X" button that 422'd: the offer survived the
+        // move that made it invalid.
+        this.purchaseOffer = data.purchase_offer ?? null;
+        this.rentDeadlineAt = data.rent_deadline_at ?? null;
         await this.refreshOptions();
         return data.events;
       } catch (err: any) {
@@ -229,6 +234,10 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     },
     offerRent(amount: number) {
       return this.submit('offer_rent', { amount });
+    },
+    /** Settle the debt with a square instead of cash. */
+    offerRentProperty(square: number) {
+      return this.submit('offer_rent_property', { square });
     },
     acceptRentOffer() {
       return this.submit('accept_rent_offer');
