@@ -9,6 +9,11 @@ const matches = ref<any[]>([]);
 const boards = ref<any[]>([]);
 const seats = ref(3);
 const selectedBoard = ref<string>('');
+/** What happens to the seats you do not fill yourself. */
+const fillPolicy = ref<'agents_now' | 'wait_forever' | 'wait_then_agents'>('agents_now');
+const waitMinutes = ref(10);
+const WAIT_CHOICES = [3, 5, 10, 20, 60];
+const openMatches = ref<any[]>([]);
 const loading = ref(false);
 const creating = ref(false);
 const error = ref<string | null>(null);
@@ -23,12 +28,14 @@ async function load() {
   try {
     // NOTE: the shared ApiClient returns the parsed BODY, not an axios-style
     // { data } envelope — reading `.data` here yields undefined.
-    const [matchRes, boardRes] = await Promise.all([
+    const [matchRes, boardRes, openRes] = await Promise.all([
       api.get('/bdv/matches') as Promise<any>,
       api.get('/bdv/boards') as Promise<any>,
+      api.get('/bdv/matches/open') as Promise<any>,
     ]);
     matches.value = matchRes.items ?? [];
     boards.value = boardRes.items ?? [];
+    openMatches.value = openRes.items ?? [];
     if (!selectedBoard.value && boards.value.length) {
       selectedBoard.value = boards.value[0].slug;
       seats.value = boards.value[0].default_seats ?? 3;
@@ -48,12 +55,23 @@ async function createMatch() {
     const data = (await api.post('/bdv/matches', {
       board_slug: selectedBoard.value,
       seats: seats.value,
+      fill_policy: fillPolicy.value,
+      wait_minutes: fillPolicy.value === 'wait_then_agents' ? waitMinutes.value : null,
     })) as any;
     router.push(`/dashboard/bdv/${data.id}`);
   } catch (err: any) {
     error.value = err?.message ?? 'Could not start the match';
   } finally {
     creating.value = false;
+  }
+}
+
+async function joinMatch(id: string) {
+  try {
+    await api.post(`/bdv/matches/${id}/join`, { display_name: 'Player' });
+    router.push(`/dashboard/bdv/${id}`);
+  } catch (err: any) {
+    error.value = err?.message ?? 'Could not join';
   }
 }
 
@@ -95,15 +113,79 @@ onMounted(load);
           />
           <small>Agents fill the remaining seats. 3 is the smallest real table.</small>
         </label>
-        <button
-          class="btn btn--primary"
-          data-testid="bdv-start-match"
-          :disabled="creating || !selectedBoard"
-          @click="createMatch"
-        >
-          {{ creating ? 'Starting…' : 'Start match' }}
-        </button>
       </div>
+
+      <fieldset class="policy" data-testid="bdv-fill-policy">
+        <legend>Who fills the other seats?</legend>
+
+        <label class="opt" :class="{ on: fillPolicy === 'agents_now' }">
+          <input v-model="fillPolicy" type="radio" value="agents_now" data-testid="bdv-policy-agents" />
+          <span>
+            <strong>Play against agents now</strong>
+            <em>Start immediately. Agents take every seat you did not fill.</em>
+          </span>
+        </label>
+
+        <label class="opt" :class="{ on: fillPolicy === 'wait_forever' }">
+          <input v-model="fillPolicy" type="radio" value="wait_forever" data-testid="bdv-policy-wait" />
+          <span>
+            <strong>Wait for real players</strong>
+            <em>Seats stay open until humans join. No time limit.</em>
+          </span>
+        </label>
+
+        <label class="opt" :class="{ on: fillPolicy === 'wait_then_agents' }">
+          <input v-model="fillPolicy" type="radio" value="wait_then_agents" data-testid="bdv-policy-timed" />
+          <span>
+            <strong>Wait a while, then start with agents</strong>
+            <em>Hold the seats open for a set time; agents take whatever is left.</em>
+            <span v-if="fillPolicy === 'wait_then_agents'" class="minutes">
+              <button
+                v-for="m in WAIT_CHOICES"
+                :key="m"
+                type="button"
+                class="chip"
+                :class="{ on: waitMinutes === m }"
+                :data-testid="`bdv-wait-${m}`"
+                @click.prevent="waitMinutes = m"
+              >
+                {{ m }} min
+              </button>
+            </span>
+          </span>
+        </label>
+      </fieldset>
+
+      <button
+        class="btn btn--primary"
+        data-testid="bdv-start-match"
+        :disabled="creating || !selectedBoard"
+        @click="createMatch"
+      >
+        {{ creating ? 'Starting…' : fillPolicy === 'agents_now' ? 'Start match' : 'Open the table' }}
+      </button>
+    </div>
+
+    <div v-if="openMatches.length" class="bdv-card" data-testid="bdv-open-tables">
+      <header class="head">
+        <h2>Tables waiting for players</h2>
+        <p class="sub">Someone opened a table and is waiting. Take a seat.</p>
+      </header>
+      <table class="table">
+        <thead><tr><th>Seats</th><th>Open</th><th>Waiting policy</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="m in openMatches" :key="m.id" data-testid="bdv-open-row">
+            <td>{{ m.seats?.length }}</td>
+            <td>{{ m.open_seats }}</td>
+            <td class="muted">
+              {{ m.fill_policy === 'wait_forever' ? 'waiting indefinitely' : 'agents take over at the deadline' }}
+            </td>
+            <td class="right">
+              <button class="btn btn--sm" data-testid="bdv-join" @click="joinMatch(m.id)">Join</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <div class="bdv-card">
@@ -189,4 +271,21 @@ onMounted(load);
 .badge--done { background: #6f42c1; }
 
 .empty { padding: 30px; text-align: center; color: #6c757d; }
+
+.policy { border: 1px solid #e9ecef; border-radius: 6px; padding: 12px 14px; margin: 4px 0 16px; }
+.policy legend { font-size: 13px; font-weight: 600; color: #2c3e50; padding: 0 6px; }
+.opt {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 9px 10px; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.opt:hover { background: #f8f9fa; }
+.opt.on { background: #e3f2fd; border-color: #bee0f7; }
+.opt strong { display: block; font-size: 14px; color: #2c3e50; }
+.opt em { font-style: normal; font-size: 12px; color: #6c757d; }
+.minutes { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chip {
+  padding: 4px 10px; border: 1px solid #ced4da; border-radius: 14px;
+  background: #fff; font-size: 12px; cursor: pointer; color: #2c3e50;
+}
+.chip.on { background: #3498db; border-color: #3498db; color: #fff; font-weight: 600; }
 </style>

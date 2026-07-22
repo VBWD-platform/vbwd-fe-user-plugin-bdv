@@ -24,6 +24,30 @@ const seatMeta = computed(() => store.match?.seats ?? []);
 const currencyLabel = computed(() => store.spec?.board?.currency_label ?? 'cr');
 const boardName = computed(() => store.spec?.board?.game_display_name || 'BizDevVibes');
 
+/** Lobby state: the table is open and still waiting for humans. */
+const isWaiting = computed(() => store.match?.status === 'lobby');
+const openSeats = computed(() => store.match?.open_seats ?? 0);
+const now = ref(Date.now());
+let clock: number | null = null;
+
+const remaining = computed(() => {
+  const deadline = store.match?.lobby_deadline_at;
+  if (!deadline) return null;
+  const ms = new Date(deadline).getTime() - now.value;
+  return ms > 0 ? ms : 0;
+});
+const countdown = computed(() => {
+  const ms = remaining.value;
+  if (ms === null) return null;
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+});
+
+async function startNow() {
+  await api.post(`/bdv/matches/${matchId.value}/start-now`, {});
+  await refresh();
+}
+
 const SEAT_COLOURS = ['#3498db', '#e06666', '#28a745', '#f0a202', '#8e7cc3', '#17a2b8'];
 const seatColour = (i: number) => SEAT_COLOURS[i % SEAT_COLOURS.length];
 
@@ -63,12 +87,18 @@ onMounted(async () => {
   await store.load(matchId.value);
   await loadEvents();
   startPolling();
+  clock = window.setInterval(() => {
+    now.value = Date.now();
+  }, 1000);
 });
 watch(matchId, async (id) => {
   await store.load(id);
   await loadEvents();
 });
-onBeforeUnmount(stopPolling);
+onBeforeUnmount(() => {
+  stopPolling();
+  if (clock !== null) window.clearInterval(clock);
+});
 
 /** Board click and chat-card tap funnel into the SAME action. */
 async function act(fn: () => Promise<unknown>) {
@@ -104,8 +134,27 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
         </ul>
       </header>
 
+      <section v-if="isWaiting" class="bdv-waiting-room" data-testid="bdv-waiting-room">
+        <h3>Waiting for players</h3>
+        <p class="seats-left">
+          <strong>{{ openSeats }}</strong> seat{{ openSeats === 1 ? '' : 's' }} still open.
+        </p>
+
+        <p v-if="countdown" class="countdown" data-testid="bdv-countdown">
+          Agents take over in <strong>{{ countdown }}</strong>
+        </p>
+        <p v-else class="countdown muted" data-testid="bdv-wait-forever">
+          No time limit — this table waits until someone joins.
+        </p>
+
+        <button class="start-now" data-testid="bdv-start-now" @click="startNow">
+          Start now with agents
+        </button>
+        <p class="hint">Share the lobby link, or start immediately and let agents fill the rest.</p>
+      </section>
+
       <BdvBoardCanvas
-        v-if="store.spec"
+        v-else-if="store.spec"
         :squares="store.squares"
         :seats="seats"
         :seat-meta="seatMeta"
@@ -202,6 +251,37 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
 .nm { font-weight: 600; }
 .cash { color: #6c757d; }
 .bust { color: #c0392b; font-weight: 700; }
+
+.bdv-waiting-room {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  background: #f8f9fa;
+  border: 1px dashed #ced4da;
+  border-radius: 10px;
+  padding: 40px 20px;
+}
+.bdv-waiting-room h3 { margin: 0; color: #2c3e50; }
+.seats-left { margin: 0; color: #2c3e50; }
+.countdown { margin: 0; font-size: 15px; color: #3498db; }
+.countdown.muted { color: #6c757d; }
+.start-now {
+  margin-top: 10px;
+  padding: 9px 18px;
+  background: #3498db;
+  color: #fff;
+  border: 1px solid #3498db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.start-now:hover { background: #2c85c4; }
+.hint { margin: 4px 0 0; font-size: 12px; color: #6c757d; }
 
 @media (max-width: 1000px) {
   .bdv-match { grid-template-columns: 1fr; height: auto; }
