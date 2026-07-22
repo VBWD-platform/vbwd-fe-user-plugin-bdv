@@ -74,6 +74,8 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     rentDeadlineAt: null as string | null,
     /** Server clock for the 5-minute privatisation window; display only. */
     turnDeadlineAt: null as string | null,
+    /** Server-computed affordances for each square you own. */
+    estate: [] as any[],
     /** Server-computed: what you owe and whether you can still do anything. */
     settlement: null as
       | {
@@ -127,20 +129,23 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     myDebt(): number {
       return this.myLoans.reduce((sum: number, l: any) => sum + l.outstanding, 0);
     },
-    /** Squares you own, with build/sell context for the manage popup. */
+    /**
+     * Squares you own, with what may actually be DONE to each.
+     *
+     * The affordances come from the SERVER (`estate`), because whether a build
+     * is legal depends on owning the whole funnel stage, on even building, on
+     * the house cap and on cash — four rules the engine owns. Re-deriving them
+     * here produced a Build button on every square that failed on click.
+     * The board spec is merged in only for its display fields.
+     */
     myEstate(state): any[] {
-      const ownership = state.matchState?.ownership ?? {};
-      const houses = state.matchState?.houses ?? {};
-      const pledged = new Set(
-        (state.matchState?.loans ?? []).flatMap((l: any) => l.collateral),
+      const spec = new Map(
+        (state.spec?.squares ?? []).map((sq: any) => [sq.index, sq]),
       );
-      return (state.spec?.squares ?? [])
-        .filter((sq: any) => ownership[String(sq.index)] === state.yourSeat)
-        .map((sq: any) => ({
-          ...sq,
-          houses: houses[String(sq.index)] ?? 0,
-          pledged: pledged.has(sq.index),
-        }));
+      return (state.estate ?? []).map((row: any) => ({
+        ...(spec.get(row.index) ?? {}),
+        ...row,
+      }));
     },
     myCash(state): number {
       const seat = (state.matchState?.seats ?? []).find(
@@ -207,6 +212,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         this.rentDeadlineAt = data.rent_deadline_at ?? null;
         this.turnDeadlineAt = data.turn_deadline_at ?? null;
         this.settlement = data.settlement ?? null;
+        this.estate = data.estate ?? [];
         await this.refreshOptions();
       } catch (err: any) {
         this.error = err?.message ?? 'Failed to load match';
@@ -238,6 +244,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
       this.rentDeadlineAt = data.rent_deadline_at ?? null;
       this.turnDeadlineAt = data.turn_deadline_at ?? null;
       this.settlement = data.settlement ?? null;
+      this.estate = data.estate ?? [];
       await this.refreshOptions();
     },
 
@@ -263,6 +270,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         this.purchaseOffer = data.purchase_offer ?? null;
         this.rentDeadlineAt = data.rent_deadline_at ?? null;
         this.settlement = data.settlement ?? null;
+        this.estate = data.estate ?? [];
         await this.refreshOptions();
         return data.events;
       } catch (err: any) {

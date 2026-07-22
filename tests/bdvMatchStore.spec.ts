@@ -378,3 +378,55 @@ describe('a finished fight', () => {
     expect(store.isYourTurn).toBe(false);
   });
 });
+
+describe('the manage-book panel', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it('takes its affordances from the server, not from the board spec', async () => {
+    // Re-deriving them here put a Build button on every owned square, and
+    // building on an incomplete funnel stage 500'd on every click.
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options')
+        ? Promise.resolve(OPTIONS)
+        : Promise.resolve({
+            ...MATCH,
+            spec: { ...MATCH.spec, squares: [{ index: 3, name: 'Cold List', kind: 'deal' }] },
+            estate: [
+              {
+                index: 3,
+                name: 'Cold List',
+                houses: 0,
+                house_cost: 500,
+                can_build: false,
+                build_blocked_because: 'you must own the whole funnel stage first',
+                can_sell_house: false,
+                can_sell_square: true,
+                mortgage_value: 300,
+              },
+            ],
+          }),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+
+    expect(store.myEstate).toHaveLength(1);
+    const square = store.myEstate[0];
+    expect(square.can_build).toBe(false);
+    expect(square.build_blocked_because).toContain('whole funnel stage');
+    expect(square.can_sell_square).toBe(true);
+    // Display fields still come from the spec.
+    expect(square.kind).toBe('deal');
+  });
+
+  it('is empty rather than guessed when the server sends nothing', async () => {
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options') ? Promise.resolve(OPTIONS) : Promise.resolve(MATCH),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.myEstate).toEqual([]);
+  });
+});

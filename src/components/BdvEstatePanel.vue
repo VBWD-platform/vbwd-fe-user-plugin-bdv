@@ -95,26 +95,37 @@ function togglePledge(index: number) {
               <span v-else class="muted">—</span>
             </td>
             <td class="right">
+              <!-- Every affordance below is the SERVER's answer, not a guess
+                   made here. The panel used to offer Build on any deal square,
+                   so building on an incomplete funnel stage looked available
+                   and failed on every click. -->
               <button
-                v-if="square.kind === 'deal' && square.houses < maxHouses"
+                v-if="square.can_build"
                 class="btn btn--sm"
                 :data-testid="`bdv-build-${square.index}`"
-                :disabled="submitting || cash < square.house_cost"
+                :disabled="submitting"
                 @click="emit('build', square.index)"
               >
                 Build {{ square.house_cost }}
               </button>
+              <span
+                v-else-if="square.build_blocked_because && square.kind === 'deal'"
+                class="why"
+                :data-testid="`bdv-build-blocked-${square.index}`"
+              >
+                {{ square.build_blocked_because }}
+              </span>
               <button
-                v-if="square.houses > 0"
+                v-if="square.can_sell_house"
                 class="btn btn--sm"
                 :data-testid="`bdv-sell-house-${square.index}`"
                 :disabled="submitting"
                 @click="emit('sell-house', square.index)"
               >
-                Sell house +{{ Math.floor(square.house_cost / 2) }}
+                Sell house +{{ square.house_refund ?? Math.floor(square.house_cost / 2) }}
               </button>
               <button
-                v-if="square.houses === 0 && !square.pledged"
+                v-if="square.can_sell_square"
                 class="btn btn--sm btn--danger"
                 :data-testid="`bdv-sell-square-${square.index}`"
                 :disabled="submitting"
@@ -210,6 +221,7 @@ h4 { margin: 18px 0 4px; color: #2c3e50; font-size: 14px; }
 }
 .tbl td { padding: 6px 8px; border-bottom: 1px solid #e9ecef; font-size: 13px; color: #2c3e50; }
 .right { text-align: right; white-space: nowrap; }
+.why { font-size: 11px; color: #8a949e; font-style: italic; }
 .tag {
   margin-left: 6px; padding: 1px 6px; border-radius: 8px; background: #f1f3f5;
   font-size: 10px; color: #6c757d;
