@@ -23,6 +23,61 @@ const loading = ref(false);
 const creating = ref(false);
 const error = ref<string | null>(null);
 
+/* ------------------------------------------------- agent fight (S146-15) */
+const agents = ref<any[]>([]);
+const chosenAgents = ref<string[]>([]);
+const price = ref(0);
+const balance = ref(0);
+const maxAgents = ref(4);
+const fightError = ref<string | null>(null);
+const starting = ref(false);
+
+const canAfford = computed(() => balance.value >= price.value);
+const enoughAgents = computed(
+  () => chosenAgents.value.length >= 2 && chosenAgents.value.length <= maxAgents.value,
+);
+
+function toggleAgent(id: string) {
+  if (chosenAgents.value.includes(id)) {
+    chosenAgents.value = chosenAgents.value.filter((a) => a !== id);
+  } else if (chosenAgents.value.length < maxAgents.value) {
+    chosenAgents.value = [...chosenAgents.value, id];
+  }
+}
+
+async function loadAgents() {
+  try {
+    const data = (await api.get('/bdv/agents')) as any;
+    agents.value = data.items ?? [];
+    price.value = data.price ?? 0;
+    balance.value = data.balance ?? 0;
+    maxAgents.value = data.max_agents ?? 4;
+  } catch {
+    /* the roster is optional — the rest of the lobby still works without it */
+  }
+}
+
+async function startAgentFight() {
+  if (starting.value || !enoughAgents.value || !canAfford.value) return;
+  starting.value = true;
+  fightError.value = null;
+  try {
+    const data = (await api.post('/bdv/agent-matches', {
+      board_slug: selectedBoard.value,
+      agent_ids: chosenAgents.value,
+    })) as any;
+    balance.value = data.balance ?? balance.value;
+    router.push(`/dashboard/bdv/${data.id}`);
+  } catch (err: any) {
+    // 402 carries the live balance, so the number on screen stays honest even
+    // when the charge is refused.
+    balance.value = err?.data?.balance ?? balance.value;
+    fightError.value = err?.data?.error ?? err?.message ?? 'Could not start the fight';
+  } finally {
+    starting.value = false;
+  }
+}
+
 const selectedBoardMeta = computed(() =>
   boards.value.find((b) => b.slug === selectedBoard.value),
 );
@@ -97,7 +152,10 @@ async function joinMatch(id: string) {
   }
 }
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  await loadAgents();
+});
 </script>
 
 <template>
@@ -113,6 +171,55 @@ onMounted(load);
       </header>
 
       <p v-if="error" class="alert" data-testid="bdv-error">{{ error }}</p>
+
+      <section v-if="agents.length" class="fight" data-testid="bdv-agent-fight">
+        <header class="fight-head">
+          <div>
+            <h3>Watch the agents fight</h3>
+            <p class="sub">
+              Pick two to {{ maxAgents }} agents and let them play it out. You take no
+              seat — you watch. Their record is lifetime, across every table.
+            </p>
+          </div>
+          <div class="price" data-testid="bdv-fight-price">
+            <strong>{{ price }}</strong> token{{ price === 1 ? '' : 's' }}
+            <small :class="{ short: !canAfford }">balance {{ balance }}</small>
+          </div>
+        </header>
+
+        <ul class="roster">
+          <li v-for="agent in agents" :key="agent.id">
+            <button
+              class="agent"
+              :class="{ on: chosenAgents.includes(agent.id) }"
+              :data-testid="`bdv-agent-${agent.slug}`"
+              @click="toggleAgent(agent.id)"
+            >
+              <span class="nm">{{ agent.name }}</span>
+              <span v-if="agent.persona" class="persona">{{ agent.persona }}</span>
+              <span class="record">
+                {{ agent.games_played }} played · {{ agent.games_won }} won ·
+                {{ agent.net_capital }} net
+              </span>
+            </button>
+          </li>
+        </ul>
+
+        <p v-if="fightError" class="alert" data-testid="bdv-fight-error">{{ fightError }}</p>
+        <p v-else-if="!canAfford" class="alert alert--warn" data-testid="bdv-fight-short">
+          You need {{ price - balance }} more token{{ price - balance === 1 ? '' : 's' }} to
+          run a fight.
+        </p>
+
+        <button
+          class="btn btn--primary"
+          data-testid="bdv-start-fight"
+          :disabled="!enoughAgents || !canAfford || starting"
+          @click="startAgentFight"
+        >
+          {{ starting ? 'Starting…' : `Run the fight — ${price} tokens` }}
+        </button>
+      </section>
 
       <div class="new-match">
         <label class="field">
@@ -397,4 +504,46 @@ onMounted(load);
 }
 .found strong { color: #2c3e50; margin-right: 8px; font-family: ui-monospace, Menlo, monospace; }
 .found .sub { margin: 4px 0 0; }
+
+/* ------------------------------------------------------------ agent fight */
+.fight {
+  margin: 18px 0;
+  padding: 16px 18px;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  background: #fdfdfe;
+}
+.fight-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+.fight-head h3 { margin: 0; color: #2c3e50; font-size: 15px; }
+.price { text-align: right; color: #2c3e50; font-size: 15px; white-space: nowrap; }
+.price small { display: block; color: #6c757d; font-size: 11px; }
+.price small.short { color: #c0392b; font-weight: 600; }
+.roster {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+.agent {
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.agent:hover { border-color: #3498db; }
+.agent.on { border-color: #3498db; background: #eef7fd; }
+.agent .nm { display: block; font-weight: 600; color: #2c3e50; font-size: 13px; }
+.agent .persona { display: block; font-size: 12px; color: #6c757d; margin-top: 2px; }
+.agent .record { display: block; font-size: 11px; color: #8a949e; margin-top: 4px; }
+.alert--warn { background: #fff8e6; color: #7a5b00; }
 </style>

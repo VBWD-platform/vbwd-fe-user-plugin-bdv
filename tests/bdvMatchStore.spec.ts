@@ -207,3 +207,72 @@ describe('the privatisation trading window', () => {
     });
   });
 });
+
+describe('conceding', () => {
+  const FINISHED_OFF = {
+    ...MATCH,
+    settlement: {
+      due: 18000,
+      cash: 7139,
+      shortfall: 10861,
+      can_raise_cash: false,
+      liquidation_value: 0,
+      must_concede: true,
+    },
+  };
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it('offers the exit only when the server says nothing is left', async () => {
+    // The verdict is never computed here: a concede button shown to a seat that
+    // could simply pay would be a way to deny the landlord their rent.
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options') ? Promise.resolve(OPTIONS) : Promise.resolve(FINISHED_OFF),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.mustConcede).toBe(true);
+    expect(store.settlement?.shortfall).toBe(10861);
+  });
+
+  it('stays hidden while cash or assets remain', async () => {
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options')
+        ? Promise.resolve(OPTIONS)
+        : Promise.resolve({
+            ...MATCH,
+            settlement: {
+              ...FINISHED_OFF.settlement,
+              can_raise_cash: true,
+              must_concede: false,
+            },
+          }),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.mustConcede).toBe(false);
+  });
+
+  it('is refreshed by every action, not only on load', async () => {
+    // The stale-state family of bugs: a verdict that outlives the move that
+    // changed it leaves a dead button on screen.
+    (api.get as any).mockImplementation((url: string) =>
+      url.endsWith('/options') ? Promise.resolve(OPTIONS) : Promise.resolve(MATCH),
+    );
+    const store = useBdvMatchStore();
+    await store.load('m1');
+    expect(store.mustConcede).toBe(false);
+
+    (api.post as any).mockResolvedValue({
+      state_seq: 8,
+      state: MATCH.state,
+      events: [],
+      settlement: FINISHED_OFF.settlement,
+    });
+    await store.sellSquare(3);
+    expect(store.mustConcede).toBe(true);
+  });
+});

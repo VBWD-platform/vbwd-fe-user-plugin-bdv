@@ -22,6 +22,12 @@ const props = defineProps<{
   debtorCash: number;
   /** The debtor's tradeable squares, for settling in kind. */
   estate?: Array<{ index: number; name: string; mortgage_value: number; houses: number; pledged: boolean }>;
+  /**
+   * Server verdict: true only when nothing can be sold, borrowed or paid. The
+   * client never works this out for itself — a concede button offered to a seat
+   * that could simply pay is a way to deny the landlord their rent.
+   */
+  mustConcede?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +37,7 @@ const emit = defineEmits<{
   (e: 'accept'): void;
   (e: 'insist'): void;
   (e: 'raise-cash'): void;
+  (e: 'concede'): void;
 }>();
 
 const now = ref(Date.now());
@@ -49,6 +56,8 @@ const secondsLeft = computed(() => {
 });
 
 const isDebtor = computed(() => props.demand?.debtor_seat === props.yourSeat);
+/** Two taps, because it ends the match for you and cannot be undone. */
+const confirmingConcede = ref(false);
 const isOwner = computed(() => props.demand?.owner_seat === props.yourSeat);
 const due = computed(() => props.demand?.due ?? props.demand?.amount ?? 0);
 const shortfall = computed(() => Math.max(0, due.value - props.cash));
@@ -107,9 +116,17 @@ function nameOf(seatIndex: number) {
 
       <!-- ---------------------------------------------------------- debtor -->
       <template v-if="isDebtor">
-        <p v-if="shortfall > 0" class="warn" data-testid="bdv-rent-short">
+        <p
+          v-if="shortfall > 0 && !mustConcede"
+          class="warn"
+          data-testid="bdv-rent-short"
+        >
           You are {{ shortfall }} {{ currencyLabel }} short. Sell something or borrow
           against your book first.
+        </p>
+        <p v-else-if="mustConcede" class="warn warn--final" data-testid="bdv-rent-final">
+          You are {{ shortfall }} {{ currencyLabel }} short and there is nothing
+          left to sell or borrow against. This is the end of your game.
         </p>
 
         <div class="actions">
@@ -125,16 +142,40 @@ function nameOf(seatIndex: number) {
             </span>
           </button>
           <button
-            v-if="shortfall > 0"
+            v-if="shortfall > 0 && !mustConcede"
             class="btn"
             data-testid="bdv-rent-raise"
             @click="emit('raise-cash')"
           >
             Raise cash…
           </button>
+          <template v-if="mustConcede">
+            <button
+              v-if="!confirmingConcede"
+              class="btn btn--danger"
+              data-testid="bdv-end-game"
+              :disabled="submitting"
+              @click="confirmingConcede = true"
+            >
+              End game
+            </button>
+            <template v-else>
+              <button
+                class="btn btn--danger"
+                data-testid="bdv-end-game-confirm"
+                :disabled="submitting"
+                @click="emit('concede')"
+              >
+                Yes — I'm out
+              </button>
+              <button class="btn" :disabled="submitting" @click="confirmingConcede = false">
+                Keep playing
+              </button>
+            </template>
+          </template>
         </div>
 
-        <div v-if="!demand.countered" class="negotiate">
+        <div v-if="!demand.countered && !mustConcede" class="negotiate">
           <p class="label">Or offer less — one tap:</p>
           <div class="presets">
             <button
@@ -183,7 +224,9 @@ function nameOf(seatIndex: number) {
             </div>
           </template>
         </div>
-        <p v-else class="muted">You have made your counter — it is their call now.</p>
+        <p v-else-if="!mustConcede" class="muted">
+          You have made your counter — it is their call now.
+        </p>
 
         <p v-if="secondsLeft !== null" class="muted">
           Doing nothing agrees to the full amount when the timer runs out.
@@ -287,4 +330,7 @@ header h3 { margin: 0; color: #2c3e50; font-size: 16px; }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn--primary { background: #3498db; border-color: #3498db; color: #fff; }
 .btn--primary:hover:not(:disabled) { background: #2c85c4; }
+.btn--danger { background: #c0392b; border-color: #c0392b; color: #fff; }
+.btn--danger:hover:not(:disabled) { background: #a93226; }
+.warn--final { background: #fff5f5; border-left-color: #c0392b; color: #922b21; }
 </style>

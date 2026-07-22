@@ -74,6 +74,17 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     rentDeadlineAt: null as string | null,
     /** Server clock for the 5-minute privatisation window; display only. */
     turnDeadlineAt: null as string | null,
+    /** Server-computed: what you owe and whether you can still do anything. */
+    settlement: null as
+      | {
+          due: number;
+          cash: number;
+          shortfall: number;
+          can_raise_cash: boolean;
+          liquidation_value: number;
+          must_concede: boolean;
+        }
+      | null,
     stateSeq: 0,
     loading: false,
     submitting: false,
@@ -153,6 +164,10 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         (offer: any) => offer.from_seat === state.yourSeat,
       );
     },
+    /** True only when the server says nothing can be sold, borrowed or paid. */
+    mustConcede(state): boolean {
+      return state.settlement?.must_concede === true;
+    },
     youAreReady(state): boolean {
       return (state.matchState?.trading_ready ?? []).includes(state.yourSeat as number);
     },
@@ -191,6 +206,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         this.purchaseOffer = data.purchase_offer ?? null;
         this.rentDeadlineAt = data.rent_deadline_at ?? null;
         this.turnDeadlineAt = data.turn_deadline_at ?? null;
+        this.settlement = data.settlement ?? null;
         await this.refreshOptions();
       } catch (err: any) {
         this.error = err?.message ?? 'Failed to load match';
@@ -215,6 +231,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
       this.purchaseOffer = data.purchase_offer ?? null;
       this.rentDeadlineAt = data.rent_deadline_at ?? null;
       this.turnDeadlineAt = data.turn_deadline_at ?? null;
+      this.settlement = data.settlement ?? null;
       await this.refreshOptions();
     },
 
@@ -239,6 +256,7 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
         // move that made it invalid.
         this.purchaseOffer = data.purchase_offer ?? null;
         this.rentDeadlineAt = data.rent_deadline_at ?? null;
+        this.settlement = data.settlement ?? null;
         await this.refreshOptions();
         return data.events;
       } catch (err: any) {
@@ -286,6 +304,14 @@ export const useBdvMatchStore = defineStore('bdvMatch', {
     },
     insistOnFullRent() {
       return this.submit('insist_on_full_rent');
+    },
+    /**
+     * Concede. The server refuses this unless the seat genuinely cannot settle,
+     * so the button is only ever shown when `settlement.must_concede` is true —
+     * otherwise it would be a way to deny the landlord their rent.
+     */
+    declareBankrupt() {
+      return this.submit('declare_bankrupt');
     },
     // --- solvency + assets (S146-10 / S146-11)
     buildHouse(square: number) {

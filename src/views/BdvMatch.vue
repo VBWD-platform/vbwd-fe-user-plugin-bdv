@@ -201,6 +201,8 @@ const choose = (steps: number) => act(() => store.chooseOption(steps));
         :deadline-at="store.rentDeadlineAt"
         :submitting="store.submitting"
         :estate="store.myEstate"
+        :must-concede="store.mustConcede"
+        @concede="act(() => store.declareBankrupt())"
         @agree="act(() => store.agreeToPay())"
         @offer-property="(sq) => act(() => store.offerRentProperty(sq))"
         @offer="(amount) => act(() => store.offerRent(amount))"
