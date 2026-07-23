@@ -33,7 +33,6 @@ const emit = defineEmits<{
 const pledgeChoice = ref<number[]>([]);
 const advance = ref(0);
 
-const deals = computed(() => props.estate.filter((s) => s.kind === 'deal'));
 const freeSquares = computed(() => props.estate.filter((s) => !s.pledged));
 /** Half of mortgage value is the classic LTV; the server caps it anyway. */
 const maxAdvance = computed(() =>

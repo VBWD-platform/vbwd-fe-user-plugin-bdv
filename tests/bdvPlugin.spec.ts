@@ -21,7 +21,7 @@ describe('bdvPlugin', () => {
 
   it('registers both routes on install', () => {
     const sdk = { addTranslations: vi.fn(), addRoute: vi.fn() } as any;
-    bdvPlugin.install(sdk);
+    bdvPlugin.install!(sdk);
     const paths = sdk.addRoute.mock.calls.map((call: any[]) => call[0].path);
     expect(paths).toContain('/dashboard/bdv');
     expect(paths).toContain('/dashboard/bdv/:matchId');
@@ -29,7 +29,7 @@ describe('bdvPlugin', () => {
 
   it('guards both routes behind auth', () => {
     const sdk = { addTranslations: vi.fn(), addRoute: vi.fn() } as any;
-    bdvPlugin.install(sdk);
+    bdvPlugin.install!(sdk);
     sdk.addRoute.mock.calls.forEach((call: any[]) => {
       expect(call[0].meta?.requiresAuth).toBe(true);
     });
@@ -37,7 +37,7 @@ describe('bdvPlugin', () => {
 
   it('registers English translations', () => {
     const sdk = { addTranslations: vi.fn(), addRoute: vi.fn() } as any;
-    bdvPlugin.install(sdk);
+    bdvPlugin.install!(sdk);
     expect(sdk.addTranslations).toHaveBeenCalledWith('en', expect.any(Object));
   });
 
